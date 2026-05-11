@@ -21,28 +21,37 @@ namespace Bot
         // Runs every tick. Should be used to find an Action to execute
         public override void Run()
         {
-            // Prints out the current action to the screen, so we know what our bot is doing
             Renderer.Text2D(Action != null ? Action.ToString() : "", new Vec3(10, 10), 4, Color.White);
 
             if (IsKickoff && Action == null)
             {
-                bool goingForKickoff = true; // by default, go for kickoff
+                bool goingForKickoff = true;
                 foreach (Car teammate in Teammates)
                 {
-                    // if any teammates are closer to the ball, then don't go for kickoff
                     goingForKickoff = goingForKickoff && Me.Location.Dist(Ball.Location) <= teammate.Location.Dist(Ball.Location);
                 }
-
-                Action = goingForKickoff ? new Kickoff() : new GetBoost(Me, interruptible: false); // if we aren't going for the kickoff, get boost
+                Action = goingForKickoff ? new Kickoff() : new GetBoost(Me, interruptible: false);
             }
             else if (Action == null || (Action is Drive && Action.Interruptible))
             {
-                // search for the first avaliable shot using DefaultShotCheck
-                Shot shot = FindShot(DefaultShotCheck, new Target(TheirGoal));
+                // 2v2 rotation: assign attacker/support roles based on ETA + shot angle
+                if (LivingTeammates.Count == 1)
+                {
+                    Car teammate = LivingTeammates[0];
+                    Role role = Rotation.ComputeRole(Me, teammate, TheirGoal);
+                    if (role == Role.Support)
+                    {
+                        // Low boost: collect before shadowing, otherwise get in position behind Player1
+                        Action = Me.Boost < 70
+                            ? (IAction)new GetBoost(Me)
+                            : new Drive(Me, Rotation.BackupPosition(teammate, OurGoal));
+                        return;
+                    }
+                }
 
-                // if a shot is found, go for the shot. Otherwise, if there is an Action to execute, execute it. If none of the others apply, drive back to goal.
+                Shot shot = FindShot(DefaultShotCheck, new Target(TheirGoal));
                 Action = shot ?? Action ?? new Drive(Me, OurGoal.Location);
-			}
+            }
         }
     }
 }

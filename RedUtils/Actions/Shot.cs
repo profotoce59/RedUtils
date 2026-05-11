@@ -42,6 +42,8 @@ namespace RedUtils
 
 			// Preparing to interpolate between the selected slices
 			float dt = slices[latest].Time - slices[soonest].Time;
+			if (dt < 1e-6f)
+				return (Slice.Location - slices[soonest].Location).Length() < threshold;
 			float timeFromSoonest = Slice.Time - slices[soonest].Time;
 			Vec3 slopes = (slices[latest].Location - slices[soonest].Location) * (1 / dt);
 

@@ -204,7 +204,7 @@ namespace RedUtils
 			float timeRemaining = Slice.Time - Game.Time;
 
 			// Returns true if the height of the ball is not to low, or to high, and we can get there in time
-			return Drive.GetEta(car, TargetLocation.Flatten()) < timeRemaining && TargetLocation.z >= 300 && TargetLocation.z < 510 && timeRemaining > Utils.TimeToJump(Vec3.Up, TargetLocation.z, true);
+			return Drive.GetEta(car, TargetLocation.Flatten()) < timeRemaining && TargetLocation.z >= 270 && TargetLocation.z < 510 && timeRemaining > Utils.TimeToJump(Vec3.Up, TargetLocation.z, true);
 		}
 	}
 }

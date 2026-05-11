@@ -63,7 +63,13 @@ namespace RedUtils
 		/// <param name="target">The final resting place of the ball after we hit it (hopefully)</param>
 		public static Shot FindShot(ShotCheck shotCheck, Target target)
 		{
-			return shotCheck(Ball.Prediction.Find(slice => shotCheck(slice, target) != null), target);
+			Shot result = null;
+			Ball.Prediction.Find(slice =>
+			{
+				result = shotCheck(slice, target);
+				return result != null;
+			});
+			return result;
 		}
 
 		/// <summary>The default shot check. Will go for pretty much anything it can</summary>
@@ -80,7 +86,7 @@ namespace RedUtils
 				{
 					Ball ballAfterHit = slice.ToBall();
 					Vec3 carFinVel = ((slice.Location - Me.Location) / timeRemaining).Cap(0, Car.MaxSpeed);
-					ballAfterHit.velocity = carFinVel + slice.Velocity.Flatten(carFinVel.Normalize()) * 0.8f;
+					ballAfterHit.velocity = (carFinVel * 6 + slice.Velocity) / 7;
 					Vec3 shotTarget = target.Clamp(ballAfterHit);
 
 					// First, check if we can aerial
@@ -114,6 +120,66 @@ namespace RedUtils
 			}
 
 			return null; // if none of those work, we'll just return null (meaning no shot was found)
+		}
+
+		/// <summary>
+		/// Same as DefaultShotCheck but uses the RocketSim collision formula to estimate ball velocity after hit.
+		/// More accurate shotTarget, especially for angled shots.
+		/// Switch with DefaultShotCheck in Bot.cs to compare precision.
+		/// </summary>
+		public Shot AccurateShotCheck(BallSlice slice, Target target)
+		{
+			if (slice == null)
+				return null;
+
+			float timeRemaining = slice.Time - Game.Time;
+			if (timeRemaining <= 0 || !target.Fits(slice.Location))
+				return null;
+
+			Ball ballAfterHit = slice.ToBall();
+			ballAfterHit.velocity = slice.Velocity + RocketSimAddedVelocity(Me, slice);
+			Vec3 shotTarget = target.Clamp(ballAfterHit);
+
+			AerialShot aerialShot = new AerialShot(Me, slice, shotTarget);
+			if (aerialShot.IsValid(Me)) return aerialShot;
+
+			GroundShot groundShot = new GroundShot(Me, slice, shotTarget);
+			if (groundShot.IsValid(Me)) return groundShot;
+
+			JumpShot jumpShot = new JumpShot(Me, slice, shotTarget);
+			if (jumpShot.IsValid(Me)) return jumpShot;
+
+			DoubleJumpShot doubleJumpShot = new DoubleJumpShot(Me, slice, shotTarget);
+			if (doubleJumpShot.IsValid(Me)) return doubleJumpShot;
+
+			return null;
+		}
+
+		/// <summary>
+		/// Estimates the velocity added to the ball on hit, using RocketSim constants.
+		/// Source: github.com/ZealanL/RocketSim — Ball::_OnHit
+		/// </summary>
+		private static Vec3 RocketSimAddedVelocity(Car car, BallSlice slice)
+		{
+			// Contact normal: car → ball, Z flattened to 35% (BALL_CAR_EXTRA_IMPULSE_Z_SCALE)
+			Vec3 hitDir = ((slice.Location - car.Location) * new Vec3(1, 1, 0.35f)).Normalize();
+
+			// Reduce the forward component by 35% (BALL_CAR_EXTRA_IMPULSE_FORWARD_SCALE = 0.65)
+			hitDir = (hitDir - car.Forward * hitDir.Dot(car.Forward) * 0.35f).Normalize();
+
+			// Relative speed capped at 4600 uu/s (BALL_CAR_EXTRA_IMPULSE_MAXDELTAVEL_UU)
+			float relSpeed = MathF.Min((slice.Velocity - car.Velocity).Length(), 4600f);
+
+			return hitDir * relSpeed * RocketSimImpulseCurve(relSpeed);
+		}
+
+		/// <summary>BALL_CAR_EXTRA_IMPULSE_FACTOR_CURVE from RocketSim — piecewise linear</summary>
+		private static float RocketSimImpulseCurve(float relSpeed)
+		{
+			if (relSpeed <= 500f)  return 0.65f;
+			if (relSpeed <= 2300f) return 0.65f + (0.55f - 0.65f) * (relSpeed - 500f)  / (2300f - 500f);
+			if (relSpeed <= 4600f) return 0.55f + (0.30f - 0.55f) * (relSpeed - 2300f) / (4600f - 2300f);
+			return 0.30f;
 		}
 	}
 }

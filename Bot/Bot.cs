@@ -10,6 +10,8 @@ namespace Bot
     {
         // Toggle to enable/disable in-game debug overlay
         private const bool DebugMode = true;
+        // Toggle between default (simplified) and accurate (RocketSim) hit physics for FindShot
+        private const bool AccuratePhysics = false;
 
         public MyBot(string botName, int botTeam, int botIndex) : base(botName, botTeam, botIndex) { }
     // Your bot class! :D
@@ -43,6 +45,8 @@ namespace Bot
                     return;
                 }
 
+                ShotCheck shotCheck = AccuratePhysics ? AccurateShotCheck : DefaultShotCheck;
+
                 switch (gameState)
                 {
                     case GameStateMode.Defensive:
@@ -50,7 +54,7 @@ namespace Bot
                         break;
 
                     case GameStateMode.Contested:
-                        Shot contestedShot = FindShot(DefaultShotCheck, new Target(TheirGoal));
+                        Shot contestedShot = FindShot(shotCheck, new Target(TheirGoal));
                         Action = (IAction)contestedShot ?? new Drive(Me, Ball.Location);
                         break;
 
@@ -59,7 +63,7 @@ namespace Bot
                         Target target = opponentLastTouched
                             ? new Target(OurGoal, shootAwayFromGoal: true)
                             : new Target(TheirGoal);
-                        Shot offensiveShot = FindShot(DefaultShotCheck, target);
+                        Shot offensiveShot = FindShot(shotCheck, target);
                         Action = (IAction)offensiveShot ?? new Drive(Me, Ball.Location);
                         break;
                 }

@@ -7,7 +7,19 @@
             "type": "process",
             "args": [
                 "build",
-                "${workspaceFolder}/RedUtils/Bot/Bot.csproj"
+                "${workspaceFolder}/RedUtils/Bot/Bot.csproj",
+                "-c", "Debug"
+            ],
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "build release",
+            "command": "dotnet",
+            "type": "process",
+            "args": [
+                "build",
+                "${workspaceFolder}/RedUtils/Bot/Bot.csproj",
+                "-c", "Release"
             ],
             "problemMatcher": "$msCompile"
         }

@@ -3,11 +3,22 @@
     "configurations": [
 
         {
-            "name": "Build",
+            "name": "Debug (DebugMode ON)",
             "type": "coreclr",
             "request": "launch",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/RedUtils/Bot/bin/Debug/net10.0/Bot.exe",
+            "args": ["36969"],
+            "cwd": "${workspaceFolder}/RedUtils/Bot",
+            "stopAtEntry": false,
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Release (DebugMode OFF)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build release",
+            "program": "${workspaceFolder}/RedUtils/Bot/bin/Release/net10.0/Bot.exe",
             "args": ["36969"],
             "cwd": "${workspaceFolder}/RedUtils/Bot",
             "stopAtEntry": false,

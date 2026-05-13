@@ -8,8 +8,12 @@ namespace Bot
 {
     public class MyBot : RUBot
     {
-        // Toggle to enable/disable in-game debug overlay
+        // Automatically true in Debug build, false in Release build
+#if DEBUG
         private const bool DebugMode = true;
+#else
+        private const bool DebugMode = false;
+#endif
         // Toggle between default (simplified) and accurate (RocketSim) hit physics for FindShot
         private const bool AccuratePhysics = false;
 

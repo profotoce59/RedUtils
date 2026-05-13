@@ -1,27 +1,27 @@
-﻿using System;
+using System;
 using System.Threading;
 using System.Drawing;
 using RedUtils;
 using RedUtils.Math;
-/* 
- * This is the main file. It contains your bot class. Feel free to change the name!
- * An instance of this class will be created for each instance of your bot in the game.
- * Your bot derives from the "RedUtilsBot" class, contained in the Bot file inside the RedUtils project.
- * The run function listed below runs every tick, and should contain the custom strategy code (made by you!)
- * Right now though, it has a default ball chase strategy. Feel free to read up and use anything you like for your own strategy.
-*/
+
 namespace Bot
 {
-    // Your bot class! :D
     public class RedBot : RUBot
     {
-        // We want the constructor for our Bot to extend from RUBot, but feel free to add some other initialization in here as well.
+        // Toggle to enable/disable in-game debug overlay
+        private const bool DebugMode = true;
+
         public RedBot(string botName, int botTeam, int botIndex) : base(botName, botTeam, botIndex) { }
 
-        // Runs every tick. Should be used to find an Action to execute
         public override void Run()
         {
-            Renderer.Text2D(Action != null ? Action.ToString() : "", new Vec3(10, 10), 4, Color.White);
+            GameStateMode gameState = Rotation.ComputeGameState(Me, LivingTeammates, LivingOpponents);
+            Role? role = LivingTeammates.Count == 1
+                ? Rotation.ComputeRole(Me, LivingTeammates[0], TheirGoal)
+                : (Role?)null;
+
+            if (DebugMode)
+                DrawDebug(gameState, role);
 
             if (IsKickoff && Action == null)
             {
@@ -34,24 +34,67 @@ namespace Bot
             }
             else if (Action == null || (Action is Drive && Action.Interruptible))
             {
-                // 2v2 rotation: assign attacker/support roles based on ETA + shot angle
-                if (LivingTeammates.Count == 1)
+                if (role == Role.Support)
                 {
-                    Car teammate = LivingTeammates[0];
-                    Role role = Rotation.ComputeRole(Me, teammate, TheirGoal);
-                    if (role == Role.Support)
-                    {
-                        // Low boost: collect before shadowing, otherwise get in position behind Player1
-                        Action = Me.Boost < 70
-                            ? (IAction)new GetBoost(Me)
-                            : new Drive(Me, Rotation.BackupPosition(teammate, OurGoal));
-                        return;
-                    }
+                    Action = Me.Boost < 70
+                        ? (IAction)new GetBoost(Me)
+                        : new Drive(Me, Rotation.BackupPosition(LivingTeammates[0], OurGoal));
+                    return;
                 }
 
-                Shot shot = FindShot(DefaultShotCheck, new Target(TheirGoal));
-                Action = shot ?? Action ?? new Drive(Me, OurGoal.Location);
+                switch (gameState)
+                {
+                    case GameStateMode.Defensive:
+                        Action = new Drive(Me, Ball.Location);
+                        break;
+
+                    case GameStateMode.Contested:
+                        Shot contestedShot = FindShot(DefaultShotCheck, new Target(TheirGoal));
+                        Action = contestedShot ?? new Drive(Me, Ball.Location);
+                        break;
+
+                    case GameStateMode.Offensive:
+                        bool opponentLastTouched = Ball.LatestTouch != null && Ball.LatestTouch.Team != Me.Team;
+                        Target target = opponentLastTouched
+                            ? new Target(OurGoal, shootAwayFromGoal: true)
+                            : new Target(TheirGoal);
+                        Shot offensiveShot = FindShot(DefaultShotCheck, target);
+                        Action = offensiveShot ?? new Drive(Me, Ball.Location);
+                        break;
+                }
             }
+        }
+
+        private void DrawDebug(GameStateMode gameState, Role? role)
+        {
+            int x = 10, y = 10;
+
+            // Game state — colour-coded
+            Color stateColor = gameState switch
+            {
+                GameStateMode.Offensive => Color.LimeGreen,
+                GameStateMode.Contested => Color.Yellow,
+                GameStateMode.Defensive => Color.Red,
+                _                       => Color.White,
+            };
+            Renderer.Text2D($"STATE  : {gameState}", new Vec3(x, y), 3, stateColor);
+            y += 30;
+
+            // Role — only shown in 2v2
+            if (role.HasValue)
+            {
+                Color roleColor = role.Value == Role.Attacker ? Color.Cyan : Color.Orange;
+                Renderer.Text2D($"ROLE   : {role.Value}", new Vec3(x, y), 3, roleColor);
+                y += 30;
+            }
+
+            // Current action
+            Renderer.Text2D($"ACTION : {(Action != null ? Action.ToString() : "none")}", new Vec3(x, y), 3, Color.White);
+            y += 30;
+
+            // Boost amount — red when low
+            Color boostColor = Me.Boost < 30 ? Color.Red : Me.Boost < 70 ? Color.Yellow : Color.LimeGreen;
+            Renderer.Text2D($"BOOST  : {Me.Boost}", new Vec3(x, y), 3, boostColor);
         }
     }
 }

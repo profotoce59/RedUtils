@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using RedUtils;
 using RedUtils.Math;
 
 namespace Bot
 {
     public enum Role { Attacker, Support }
+    public enum GameStateMode { Offensive, Contested, Defensive }
 
     public static class Rotation
     {
@@ -55,6 +57,42 @@ namespace Bot
         {
             Vec3 toGoal = (ourGoal.Location - attacker.Location).Normalize();
             return attacker.Location + toGoal * 1500f;
+        }
+
+        /// <summary>
+        /// Compares our team's earliest ball ETA vs opponents' to determine possession state.
+        /// Margin of 0.3s before declaring offensive or defensive — avoids flickering on 50/50s.
+        /// </summary>
+        public static GameStateMode ComputeGameState(Car me, List<Car> livingTeammates, List<Car> livingOpponents)
+        {
+            float ourEta = FirstReachableEta(me);
+            foreach (Car tm in livingTeammates)
+                ourEta = MathF.Min(ourEta, FirstReachableEta(tm));
+
+            float theirEta = float.MaxValue;
+            foreach (Car opp in livingOpponents)
+                theirEta = MathF.Min(theirEta, FirstReachableEta(opp));
+
+            float diff = ourEta - theirEta;
+            if (diff < -0.3f) return GameStateMode.Offensive;
+            if (diff >  0.3f) return GameStateMode.Defensive;
+            return GameStateMode.Contested;
+        }
+
+        /// <summary>
+        /// Defensive fallback position: 20% of the way from our goal toward the ball.
+        /// Stays close to goal to shadow incoming shots.
+        /// </summary>
+        public static Vec3 DefensivePosition(Goal ourGoal)
+        {
+            return ourGoal.Location + (Ball.Location - ourGoal.Location) * 0.2f;
+        }
+
+        /// <summary>Time until this car can first intercept any ball prediction slice.</summary>
+        private static float FirstReachableEta(Car car)
+        {
+            BallSlice slice = Ball.Prediction.Find(s => Drive.GetEta(car, s.Location) <= s.Time - Game.Time);
+            return slice == null ? float.MaxValue : slice.Time - Game.Time;
         }
     }
 }

@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "Build",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/RedUtils/Bot/bin/Debug/net10.0/Bot.exe",
+            "args": ["36969"],
+            "cwd": "${workspaceFolder}/RedUtils/Bot",
+            "stopAtEntry": false,
+            "console": "integratedTerminal"
+        }
+    ]
+}

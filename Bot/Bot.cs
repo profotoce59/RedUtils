@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading;
 using System.Drawing;
 using RedUtils;
@@ -6,12 +6,13 @@ using RedUtils.Math;
 
 namespace Bot
 {
-    public class RedBot : RUBot
+    public class MyBot : RUBot
     {
         // Toggle to enable/disable in-game debug overlay
         private const bool DebugMode = true;
 
-        public RedBot(string botName, int botTeam, int botIndex) : base(botName, botTeam, botIndex) { }
+        public MyBot(string botName, int botTeam, int botIndex) : base(botName, botTeam, botIndex) { }
+    // Your bot class! :D
 
         public override void Run()
         {
@@ -50,7 +51,7 @@ namespace Bot
 
                     case GameStateMode.Contested:
                         Shot contestedShot = FindShot(DefaultShotCheck, new Target(TheirGoal));
-                        Action = contestedShot ?? new Drive(Me, Ball.Location);
+                        Action = (IAction)contestedShot ?? new Drive(Me, Ball.Location);
                         break;
 
                     case GameStateMode.Offensive:
@@ -59,7 +60,7 @@ namespace Bot
                             ? new Target(OurGoal, shootAwayFromGoal: true)
                             : new Target(TheirGoal);
                         Shot offensiveShot = FindShot(DefaultShotCheck, target);
-                        Action = offensiveShot ?? new Drive(Me, Ball.Location);
+                        Action = (IAction)offensiveShot ?? new Drive(Me, Ball.Location);
                         break;
                 }
             }

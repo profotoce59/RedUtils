@@ -47,7 +47,7 @@ namespace Bot
                 throw;
             }
 
-            RLBotDotNet.BotManager<RedBot> botManager = new RLBotDotNet.BotManager<RedBot>(0);
+            RLBotDotNet.BotManager<MyBot> botManager = new RLBotDotNet.BotManager<MyBot>(0);
             // Start the server on the port given in the first argument
             botManager.Start(port);
         }

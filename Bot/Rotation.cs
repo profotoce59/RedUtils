@@ -6,7 +6,8 @@ using RedUtils.Math;
 namespace Bot
 {
     public enum Role { Attacker, Support }
-    public enum GameStateMode { Offensive, Contested, Defensive }
+    public enum GameStateMode { NotPossessed, Contested, Possessed }
+    public enum FieldZone { Defensive, Offensive }
 
     public static class Rotation
     {
@@ -74,8 +75,8 @@ namespace Bot
                 theirEta = MathF.Min(theirEta, FirstReachableEta(opp));
 
             float diff = ourEta - theirEta;
-            if (diff < -0.3f) return GameStateMode.Offensive;
-            if (diff >  0.3f) return GameStateMode.Defensive;
+            if (diff < -0.3f) return GameStateMode.Possessed;
+            if (diff >  0.3f) return GameStateMode.NotPossessed;
             return GameStateMode.Contested;
         }
 
@@ -86,6 +87,16 @@ namespace Bot
         public static Vec3 DefensivePosition(Goal ourGoal)
         {
             return ourGoal.Location + (Ball.Location - ourGoal.Location) * 0.2f;
+        }
+
+        /// <summary>
+        /// Returns Defensive if the ball is in our half of the field, Offensive otherwise.
+        /// Used to avoid searching for shots deep in our own half.
+        /// </summary>
+        public static FieldZone ComputeFieldZone(Goal ourGoal)
+        {
+            bool inOurHalf = Ball.Location.y * ourGoal.Location.y > 0;
+            return inOurHalf ? FieldZone.Defensive : FieldZone.Offensive;
         }
 
         /// <summary>Time until this car can first intercept any ball prediction slice.</summary>

@@ -156,6 +156,47 @@ namespace RedUtils
 		}
 
 		/// <summary>
+		/// 50/50 au sol : uniquement GroundShot, vise le but adverse.
+		/// IsValid garantit que la balle est assez basse pour un tir au sol.
+		/// </summary>
+		public Shot Ground5050Check(BallSlice slice, Target target)
+		{
+			if (slice == null) return null;
+			float timeRemaining = slice.Time - Game.Time;
+			if (timeRemaining <= 0 || !target.Fits(slice.Location)) return null;
+
+			Ball ballAfterHit = slice.ToBall();
+			Vec3 carFinVel = ((slice.Location - Me.Location) / timeRemaining).Cap(0, Car.MaxSpeed);
+			ballAfterHit.velocity = (carFinVel * 6 + slice.Velocity) / 7;
+			Vec3 shotTarget = target.Clamp(ballAfterHit);
+
+			GroundShot groundShot = new GroundShot(Me, slice, shotTarget);
+			return groundShot.IsValid(Me) ? groundShot : null;
+		}
+
+		/// <summary>
+		/// 50/50 aérien : JumpShot ou DoubleJumpShot, vise le but adverse.
+		/// IsValid garantit que la hauteur correspond à un saut simple ou double.
+		/// </summary>
+		public Shot Air5050Check(BallSlice slice, Target target)
+		{
+			if (slice == null) return null;
+			float timeRemaining = slice.Time - Game.Time;
+			if (timeRemaining <= 0 || !target.Fits(slice.Location)) return null;
+
+			Ball ballAfterHit = slice.ToBall();
+			Vec3 carFinVel = ((slice.Location - Me.Location) / timeRemaining).Cap(0, Car.MaxSpeed);
+			ballAfterHit.velocity = (carFinVel * 6 + slice.Velocity) / 7;
+			Vec3 shotTarget = target.Clamp(ballAfterHit);
+
+			JumpShot jumpShot = new JumpShot(Me, slice, shotTarget);
+			if (jumpShot.IsValid(Me)) return jumpShot;
+
+			DoubleJumpShot doubleJumpShot = new DoubleJumpShot(Me, slice, shotTarget);
+			return doubleJumpShot.IsValid(Me) ? doubleJumpShot : null;
+		}
+
+		/// <summary>
 		/// Estimates the velocity added to the ball on hit, using RocketSim constants.
 		/// Source: github.com/ZealanL/RocketSim — Ball::_OnHit
 		/// </summary>

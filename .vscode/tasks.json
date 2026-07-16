@@ -7,7 +7,7 @@
             "type": "process",
             "args": [
                 "build",
-                "${workspaceFolder}/RedUtils/Bot/Bot.csproj",
+                "${workspaceFolder}/Bot/Bot.csproj",
                 "-c", "Debug"
             ],
             "problemMatcher": "$msCompile"
@@ -18,7 +18,7 @@
             "type": "process",
             "args": [
                 "build",
-                "${workspaceFolder}/RedUtils/Bot/Bot.csproj",
+                "${workspaceFolder}/Bot/Bot.csproj",
                 "-c", "Release"
             ],
             "problemMatcher": "$msCompile"

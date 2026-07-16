@@ -1,28 +1,31 @@
 {
     "version": "0.2.0",
     "configurations": [
-
         {
-            "name": "Debug (DebugMode ON)",
+            "name": "Build & Launch (Debug)",
             "type": "coreclr",
             "request": "launch",
             "preLaunchTask": "build",
-            "program": "${workspaceFolder}/RedUtils/Bot/bin/Debug/net10.0/Bot.exe",
+            "program": "${workspaceFolder}/Bot/bin/Debug/net10.0/Bot.exe",
             "args": ["36969"],
-            "cwd": "${workspaceFolder}/RedUtils/Bot",
+            "cwd": "${workspaceFolder}/Bot",
             "stopAtEntry": false,
             "console": "integratedTerminal"
         },
         {
-            "name": "Release (DebugMode OFF)",
+            "name": "Attach to Bot (RLBot lancé)",
             "type": "coreclr",
+            "request": "attach",
+            "processName": "Bot"
+        },
+        {
+            "name": "Run state_setting_tests.py",
+            "type": "debugpy",
             "request": "launch",
-            "preLaunchTask": "build release",
-            "program": "${workspaceFolder}/RedUtils/Bot/bin/Release/net10.0/Bot.exe",
-            "args": ["36969"],
-            "cwd": "${workspaceFolder}/RedUtils/Bot",
-            "stopAtEntry": false,
-            "console": "integratedTerminal"
-        }
+            "program": "${workspaceFolder}/state_setting_tests.py",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
     ]
 }

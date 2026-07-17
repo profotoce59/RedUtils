@@ -27,5 +27,14 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
+        {
+            "name": "Run state_setting_fixes.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/state_setting_tests_fixes.py",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
     ]
 }

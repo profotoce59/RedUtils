@@ -88,10 +88,9 @@ namespace RedUtils
 		{
 			// Fix #1 : chaque bot du process appelle Initialize → sans Clear, la liste est dupliquée
 			// et les doublons (jamais mis à jour par Update) restent "actifs" pour toujours
-			if (Fixes.FieldInitClearBoosts)
-			{
-				Boosts.Clear();
-			}
+			
+			Boosts.Clear();
+			
 
 			for (int i = 0; i < fieldInfo.BoostPadsLength; i++)
 			{

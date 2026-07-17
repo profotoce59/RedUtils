@@ -24,6 +24,11 @@ namespace RedUtils
 		public float Throttle(float targetSpeed, bool backwards = false)
 		{
 			float carSpeed = Me.Local(Me.Velocity).x; // The car's speed in the forward direction
+			// Garde-fou : un targetSpeed NaN/Infini (ex. division 0/0 dans PredictLandingTime quand on
+			// saute perpendiculairement d'un mur) ferait crasher MathF.Sign plus bas. On retombe alors
+			// sur la vitesse actuelle (throttle neutre) plutôt que de lever une ArithmeticException.
+			if (float.IsNaN(targetSpeed) || float.IsInfinity(targetSpeed))
+				targetSpeed = carSpeed * (backwards ? -1 : 1);
 			float speedDiff = (targetSpeed * (backwards ? -1 : 1)) - carSpeed;
 			Controller.Throttle = Utils.Cap(MathF.Pow(speedDiff, 2) * MathF.Sign(speedDiff) / 1000, -1, 1);
 			Controller.Boost = targetSpeed > 1400 && speedDiff > 50 && carSpeed < 2250 && Controller.Throttle == 1 && !backwards;

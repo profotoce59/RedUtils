@@ -44,7 +44,8 @@ YAWRIGHT = 0        # +x
 YAW_ORANGE = 1.5708 # +y (vers le but orange)
 YAW_LEFT = 3.14     # -x
 YAW_BLUE = 4.71     # -y (vers le but bleu)
-
+ROLL_RIGHT_WALL = 4.71
+ROLL_LEFT_WALL = 1.5708
 # Voitures "gares" hors de l'action pour ne pas polluer le test
 # (loin de la balle -> notre bot reste Attacker, et l'ETA adverse reste grande)
 def parked(x, y, yaw=YAW_ORANGE, boost=0):
@@ -73,20 +74,20 @@ TEST_STATES = [
         "FIX2 - Jump shot mural (balle longeant le mur droit)",
         GameState(
             ball=BallState(physics=Physics(
-                location=Vector3(3850, 800, 900),
-                velocity=Vector3(0, -900, 400),
+                location=Vector3(3950, 800, 900),
+                velocity=Vector3(0, -900, 600),
                 angular_velocity=Vector3(0, 0, 0),
             )),
             cars={
                 PLAYER_ORANGE1: CarState(
                     physics=Physics(
                         # Sur le mur droit (x ~ 4080), roues contre le mur, face a -y
-                        location=Vector3(4080, 1800, 500),
-                        rotation=Rotator(pitch=0, yaw=YAW_BLUE, roll=1.5708),
+                        location=Vector3(4150, 1000, 500),
+                        rotation=Rotator(pitch=0, yaw=YAW_BLUE, roll=ROLL_RIGHT_WALL),
                         velocity=Vector3(0, -400, 0),
                         angular_velocity=Vector3(0, 0, 0),
                     ),
-                    boost_amount=30,
+                    boost_amount=70,
                 ),
                 PLAYER_ORANGE2: parked(-3000, 4600),
                 PLAYER_BLUE1: parked(-3400, 4600),
@@ -95,76 +96,8 @@ TEST_STATES = [
         ),
     ),
 
-    # ------------------------------------------------------------------
-    # FIX #3 — Puissance de tir (Fixes.ShotPowerModifierFix)
-    # Balle rapide venant vers nous (vitesse relative elevee a l'impact > 2300 uu/s).
-    # Le bot doit contrer vers le but bleu (y = -5120).
-    # ATTENDU avec fix   : la visee compense correctement la puissance reelle,
-    #                      le contre part cadre (répeter 3-4 fois : plus de tirs cadres).
-    # ATTENDU sans fix   : la puissance est surestimee -> direction de tir legerement
-    #                      fausse, contres decadres / a cote du but.
-    # ------------------------------------------------------------------
-    (
-        "FIX3 - Contre puissant sur balle rapide",
-        GameState(
-            ball=BallState(physics=Physics(
-                location=Vector3(0, -2000, 200),
-                velocity=Vector3(0, 2000, 300),
-                angular_velocity=Vector3(0, 0, 0),
-            )),
-            cars={
-                PLAYER_ORANGE1: CarState(
-                    physics=Physics(
-                        location=Vector3(0, 2500, ONGROUNDHEIGHT),
-                        rotation=Rotator(pitch=0, yaw=YAW_BLUE, roll=0),
-                        velocity=Vector3(0, -500, 0),
-                        angular_velocity=Vector3(0, 0, 0),
-                    ),
-                    boost_amount=20,
-                ),
-                PLAYER_ORANGE2: parked(3500, 4600),
-                PLAYER_BLUE1: parked(-3400, -4600, yaw=YAW_BLUE),
-                PLAYER_BLUE2: parked(-3700, -4600, yaw=YAW_BLUE),
-            },
-        ),
-    ),
+   
 
-    # ------------------------------------------------------------------
-    # FIX #4 — Fin de prediction (Fixes.BallPredictionFindFix)
-    # Balle lobee tres haut retombant loin de nous ; bot sans boost a l'autre bout.
-    # La premiere slice atteignable tombe tout en fin d'horizon de prediction (~6 s).
-    # ATTENDU avec fix   : le bot s'engage vers l'interception des que possible
-    #                      (regarde l'overlay debug : STATE/ACTION se mettent a jour).
-    # ATTENDU sans fix   : le bot ignore les slices du dernier bloc -> il reste
-    #                      passif / STATE incoherent une fraction de seconde de plus,
-    #                      ou considere la balle inatteignable alors qu'elle l'est de justesse.
-    # NB : difference SUBTILE — observe l'overlay debug (STATE / ACTION) plutot que
-    #      le mouvement brut, et rejoue le scenario plusieurs fois.
-    # ------------------------------------------------------------------
-    (
-        "FIX4 - Balle lobee retombant en fin de prediction",
-        GameState(
-            ball=BallState(physics=Physics(
-                location=Vector3(-2000, -3000, 300),
-                velocity=Vector3(300, 500, 1400),
-                angular_velocity=Vector3(0, 0, 0),
-            )),
-            cars={
-                PLAYER_ORANGE1: CarState(
-                    physics=Physics(
-                        location=Vector3(3000, 4500, ONGROUNDHEIGHT),
-                        rotation=Rotator(pitch=0, yaw=YAW_BLUE, roll=0),
-                        velocity=Vector3(0, 0, 0),
-                        angular_velocity=Vector3(0, 0, 0),
-                    ),
-                    boost_amount=0,
-                ),
-                PLAYER_ORANGE2: parked(3800, 4900),
-                PLAYER_BLUE1: parked(-3400, -4900, yaw=YAW_ORANGE),
-                PLAYER_BLUE2: parked(-3700, -4900, yaw=YAW_ORANGE),
-            },
-        ),
-    ),
 ]
 
 

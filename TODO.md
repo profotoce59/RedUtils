@@ -11,7 +11,7 @@
   - Offensive + nous avons touché : FindShot(TheirGoal)
 - [x] **Bugs FindShot corrigés** — gap hauteur 270-299, double construction shot, division par zéro ShotValid, formule vélocité unifiée
 - [x] **AccurateShotCheck** — implémentation physique RocketSim pour comparer la précision vs DefaultShotCheck
-
+  
 ---
 
 ## À faire

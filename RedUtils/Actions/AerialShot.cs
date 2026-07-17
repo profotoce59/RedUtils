@@ -225,6 +225,12 @@ namespace RedUtils
 				carAfterTurn.Location = car.Location + turnSide * radius * (1 - MathF.Cos(angle)) + driveDirection * MathF.Sin(angle);
 				carAfterTurn.Forward = carAfterTurn.Location.FlatDirection(DriveLocation, normal);
 				carAfterTurn.Up = normal;
+				// Fix #5 : Forward et Up sont réassignés mais pas Right → matrice d'orientation incohérente.
+				// On réorthogonalise (convention RedUtils : Right = Up × Forward, cf. Mat3x3(rotation)).
+				if (Fixes.AerialCarCopyFix)
+				{
+					carAfterTurn.Right = carAfterTurn.Up.Cross(carAfterTurn.Forward).Normalize();
+				}
 				carAfterTurn.Velocity = carAfterTurn.Forward * Drive.SpeedAfterTurn(car.Velocity.Length(), angle, DriveAction.Backwards ? 0.8f : 1);
 
 				shouldTurn = CanHit(carAfterTurn) && !_jumpImmediatly;

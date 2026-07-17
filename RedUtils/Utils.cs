@@ -108,7 +108,11 @@ namespace RedUtils
 			{
 				return Lerp((value - 500) / 1800, 0.65f, 0.55f);
 			}
-			return Lerp((value - Car.MaxSpeed) / 4600, 0.55f, 0.3f);
+			// Fix #3 : l'ancien dénominateur (4600) ne permettait jamais d'atteindre 0.30 —
+			// le modificateur plafonnait à 0.425 à 4600 uu/s, surestimant la puissance des gros impacts.
+			// La courbe RocketSim (Tools.cs) atteint bien 0.30 à 4600.
+			float denominator = Fixes.ShotPowerModifierFix ? (4600f - Car.MaxSpeed) : 4600f;
+			return Lerp((value - Car.MaxSpeed) / denominator, 0.55f, 0.3f);
 		}
 	}
 }

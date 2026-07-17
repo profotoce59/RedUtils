@@ -86,6 +86,13 @@ namespace RedUtils
 		/// <summary>Initializes the boost pads with data from the FieldInfo struct, provided by our bot</summary>
 		public static void Initialize(FieldInfo fieldInfo)
 		{
+			// Fix #1 : chaque bot du process appelle Initialize → sans Clear, la liste est dupliquée
+			// et les doublons (jamais mis à jour par Update) restent "actifs" pour toujours
+			if (Fixes.FieldInitClearBoosts)
+			{
+				Boosts.Clear();
+			}
+
 			for (int i = 0; i < fieldInfo.BoostPadsLength; i++)
 			{
 				if (fieldInfo.BoostPads(i).HasValue)
@@ -98,6 +105,9 @@ namespace RedUtils
 					Boosts.Add(new Boost(i));
 				}
 			}
+
+			// Permet de vérifier le fix : 34 pads attendus. Sans fix, 68 quand le 2e bot rejoint.
+			Console.WriteLine($"[RedUtils] Field initialized: {Boosts.Count} boost pads");
 		}
 
 		/// <summary>Updates the boost pads with data from the packet</summary>

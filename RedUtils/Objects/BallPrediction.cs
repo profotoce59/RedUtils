@@ -27,23 +27,52 @@ namespace RedUtils
         /// </summary>
         public BallSlice Find(Predicate<BallSlice> predicate)
         {
-            if (Length > 0)
+            if (Length == 0)
+                return null;
+
+            // Fix #4 : l'ancienne version avait des angles morts —
+            // la slice "ancre" (multiple de 6) n'était retournée qu'au bloc suivant (jamais si dernier bloc),
+            // et le dernier bloc partiel (fin de l'horizon de prédiction) n'était jamais exploré.
+            if (Fixes.BallPredictionFindFix)
             {
-                for (int i = 6; i < Length; i += 6)
+                for (int i = 6; ; i += 6)
                 {
-                    if (predicate(Slices[i]))
+                    int anchor = System.Math.Min(i, Length - 1);
+                    if (predicate(Slices[anchor]))
                     {
-                        for (int j = i - 6; j < i; j++)
+                        // Balaye le bloc, ancre incluse (l'ancien code s'arrêtait à anchor - 1)
+                        for (int j = System.Math.Max(anchor - 6, 0); j <= anchor; j++)
                         {
-                            if (MathF.Abs(Slices[j].Location.y) > 5250) break;
+                            if (MathF.Abs(Slices[j].Location.y) > 5250) break; // balle marquée avant → stop
                             if (predicate(Slices[j]))
                             {
                                 return Slices[j];
                             }
                         }
                     }
-                    else if (MathF.Abs(Slices[i].Location.y) > 5250) break;
+                    else if (MathF.Abs(Slices[anchor].Location.y) > 5250) break;
+
+                    if (anchor == Length - 1) break;
                 }
+
+                return null;
+            }
+
+            // --- Version d'origine (fix désactivé) ---
+            for (int i = 6; i < Length; i += 6)
+            {
+                if (predicate(Slices[i]))
+                {
+                    for (int j = i - 6; j < i; j++)
+                    {
+                        if (MathF.Abs(Slices[j].Location.y) > 5250) break;
+                        if (predicate(Slices[j]))
+                        {
+                            return Slices[j];
+                        }
+                    }
+                }
+                else if (MathF.Abs(Slices[i].Location.y) > 5250) break;
             }
 
             return null;

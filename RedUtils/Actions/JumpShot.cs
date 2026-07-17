@@ -228,7 +228,9 @@ namespace RedUtils
 			float timeRemaining = Slice.Time - Game.Time;
 
 			// Offsets the predicted location by the amount we would've fallen, so we can compare correctly to the target location
-			Vec3 finPos = car.LocationAfterJump(timeRemaining, 0) - (1 / 2) * Game.Gravity * MathF.Pow(timeRemaining, 2);
+			// Fix #2 : (1 / 2) est une division entière == 0 → la compensation de gravité était supprimée (jump shots muraux mal synchronisés)
+			float gravityFactor = Fixes.JumpShotGravityFix ? 0.5f : 0f;
+			Vec3 finPos = car.LocationAfterJump(timeRemaining, 0) - gravityFactor * Game.Gravity * MathF.Pow(timeRemaining, 2);
 			// Gets the nearest surface to the car'a normal
 			Vec3 normal = Field.NearestSurface(car.Location).Normal;
 

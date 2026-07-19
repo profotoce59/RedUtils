@@ -60,24 +60,61 @@ namespace Bot
             return attacker.Location + toGoal * 1500f;
         }
 
+        // ETA advantage required before claiming (or conceding) the ball
+        private const float PossessionMargin = 0.4f;
+        // If an opponent reaches the ball within this, it is a contest no matter how early we get there
+        private const float ContestWindow = 0.9f;
+        // Opponents flick and dodge into the ball, and GetEta does not model that — be pessimistic
+        private const float OpponentEtaBonus = 0.15f;
+        // Above this speed a ball the opponent just hit is a projectile to challenge, not one to carry
+        private const float LooseBallSpeed = 800f;
+        // An opponent within this range of the ball can contest it whatever Drive.GetEta says.
+        // GetEta is meaningless for a car that is mid-flip or airborne right after a challenge:
+        // PredictLandingTime inflates it to several seconds while the car is in fact on the ball.
+        private const float ContestDistance = 1300f;
+
         /// <summary>
         /// Compares our team's earliest ball ETA vs opponents' to determine possession state.
-        /// Margin of 0.3s before declaring offensive or defensive — avoids flickering on 50/50s.
+        /// Possession requires both a clear ETA advantage AND that no opponent can contest soon:
+        /// arriving 0.4s before an opponent who is on the ball in 0.5s is a 50/50, not possession.
         /// </summary>
-        public static GameStateMode ComputeGameState(Car me, List<Car> livingTeammates, List<Car> livingOpponents)
+        public static GameStateMode ComputeGameState(Car me, List<Car> livingTeammates, List<Car> livingOpponents,
+            out float ourEta, out float theirEta, out float oppDist)
         {
-            float ourEta = FirstReachableEta(me);
+            ourEta = FirstReachableEta(me);
             foreach (Car tm in livingTeammates)
                 ourEta = MathF.Min(ourEta, FirstReachableEta(tm));
 
-            float theirEta = float.MaxValue;
+            theirEta = float.MaxValue;
+            oppDist = float.MaxValue;
             foreach (Car opp in livingOpponents)
+            {
                 theirEta = MathF.Min(theirEta, FirstReachableEta(opp));
+                oppDist = MathF.Min(oppDist, opp.Location.Dist(Ball.Location));
+            }
+
+            if (theirEta != float.MaxValue)
+                theirEta = MathF.Max(theirEta - OpponentEtaBonus, 0f);
 
             float diff = ourEta - theirEta;
-            if (diff < -0.3f) return GameStateMode.Possessed;
-            if (diff >  0.3f) return GameStateMode.NotPossessed;
+            if (diff > PossessionMargin) return GameStateMode.NotPossessed;
+
+            bool contestable = theirEta <= ContestWindow || oppDist < ContestDistance || IsIncomingProjectile(me);
+            if (diff < -PossessionMargin && !contestable)
+                return GameStateMode.Possessed;
             return GameStateMode.Contested;
+        }
+
+        /// <summary>
+        /// True when the opponent just struck the ball and it is travelling fast.
+        /// Their ETA explodes (the ball is running away from them) which reads as possession for us,
+        /// but nobody controls that ball yet — it has to be challenged, not dribbled.
+        /// </summary>
+        private static bool IsIncomingProjectile(Car me)
+        {
+            return Ball.LatestTouch != null
+                && Ball.LatestTouch.Team != me.Team
+                && Ball.Velocity.Length() > LooseBallSpeed;
         }
 
         /// <summary>

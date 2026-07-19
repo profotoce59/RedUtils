@@ -19,6 +19,32 @@
 
 ---
 
+## Calcul de l'état de possession
+
+ETA = temps avant que le joueur puisse intercepter un slice de `Ball.Prediction`.
+`ourEta` = min sur notre équipe, `theirEta` = min sur l'équipe adverse **− 0.15s**
+_(les adversaires flippent dans la balle, `Drive.GetEta` ne le modélise pas → on est pessimiste)_.
+
+| État | Condition |
+|------|-----------|
+| `NOT POSSESSED` | `ourEta − theirEta > 0.4s` |
+| `POSSESSED` | `ourEta − theirEta < −0.4s` **ET** `theirEta > 0.9s` **ET** pas de balle-projectile |
+| `CONTESTED` | tout le reste |
+
+**Fenêtre de contestation (0.9s)** : arriver 0.4s avant un adversaire qui est sur la balle
+dans 0.5s, ce n'est pas de la possession — c'est un 50/50.
+
+**Balle-projectile** : si l'adversaire a touché en dernier ET `|Ball.Velocity| > 800 u/s`,
+son ETA explose (la balle le fuit) et ça se lit à tort comme de la possession pour nous.
+Or personne ne contrôle cette balle → on force `CONTESTED` pour aller la challenger.
+
+**Hystérésis (0.25s)** : un nouvel état doit tenir 0.25s avant d'être adopté.
+L'estimateur d'ETA est une fonction en escalier (premier slice atteignable) : sans ça,
+une seule frame bruitée bascule toute la stratégie. L'état brut est loggé (`raw=`)
+quand il diffère de l'état retenu.
+
+---
+
 ## Kickoff
 - Coéquipier plus proche de la balle  →  `GetBoost`
 - Je suis le plus proche              →  `Kickoff` (non-interruptible)
@@ -35,7 +61,7 @@
 
 ### ATTACKER _(coéquipier présent et mon score de rôle ≤ celui du coéquipier)_ / SOLO _(pas de coéquipier)_
 
-#### NOT POSSESSED _(leur ETA < mon ETA − 0.3s — ils ont la balle)_
+#### NOT POSSESSED _(ils ont la balle)_
 - Temps avant que la balle passe à < 400u de moi < 1.5s → `Fifty` _(RedUtils/Actions/Fifty.cs)_
   - Approche : Drive vers intercept prédit
   - Contact (ballEta < 0.4s) :
@@ -44,14 +70,14 @@
     - z ≥ 400u → Saut + Boost + Dodge (aérien)
 - Sinon → `Drive(ShadowPosition)` _(60% entre notre but et la balle)_
 
-#### CONTESTED _(ETAs proches, écart < 0.3s)_
+#### CONTESTED _(ETAs proches, ou balle-projectile adverse, ou adversaire contestable < 0.9s)_
 - Zone Offensive _(balle dans leur moitié)_  →  `FindShot(LeurBut)` | `Drive(Balle)`
 - Zone Défensive _(balle dans notre moitié)_
   - Temps avant que la balle passe à < 400u de moi < 1.5s → `Fifty` _(classe RedUtils/Actions/Fifty.cs)_
   - Sinon → `Drive(Balle)`
   - Sinon  →  `Drive(Balle)`
 
-#### POSSESSED _(mon ETA < leur ETA − 0.3s — on a la balle)_
+#### POSSESSED _(on a la balle, et personne ne peut nous la contester avant 0.9s)_
 - Zone Offensive _(balle dans leur moitié)_  →  `FindShot(LeurBut)` | `Drive(Balle)`
 - Zone Défensive _(balle dans notre moitié)_
   - Angle face à leur but > 0.15 → `FindShot(LeurBut)`

@@ -22,6 +22,7 @@ from rlbot.utils.game_state_util import (
     Rotator,
 )
 
+
 # Index du joueur humain/bot que tu veux teleporter (0 = premier joueur ajoute au match).
 PLAYER_BLUE1 = 0 ##Bleu 1
 PLAYER_BLUE2 = 1 ##Bleu 2
@@ -32,6 +33,17 @@ YAWRIGHT = 0
 YAW_ORANGE = 1.5708
 YAW_LEFT = 3.14
 YAW_BLUE = 4.71
+
+def parked(x, y, yaw=YAW_ORANGE, boost=0):
+    return CarState(
+        physics=Physics(
+            location=Vector3(x, y, ONGROUNDHEIGHT),
+            rotation=Rotator(pitch=0, yaw=yaw, roll=0),
+            velocity=Vector3(0, 0, 0),
+            angular_velocity=Vector3(0, 0, 0),
+        ),
+        boost_amount=boost,
+    )
 # Ajoute ou modifie les scenarios ici. Chaque entree est (nom, GameState).
 TEST_STATES = [
     (
@@ -120,6 +132,42 @@ TEST_STATES = [
             },
         ),
     ),
+    (
+        "50 50",
+        GameState(
+            ball=BallState(physics=Physics(
+                location=Vector3(0, 300, ONGROUNDHEIGHT),
+                velocity=Vector3(0, 0, -5),
+                )),
+            cars={
+                PLAYER_ORANGE1: CarState(
+                    physics=Physics(
+                        location=Vector3(0, 1200,ONGROUNDHEIGHT),
+                        rotation=Rotator(pitch=0, yaw=YAW_BLUE, roll=0),
+                        velocity=Vector3(0, 0, 0),
+                    ),
+                    boost_amount=33,
+                ),
+                PLAYER_ORANGE2 : parked(-3000, 4600),
+                PLAYER_BLUE1: CarState(
+                    physics=Physics(
+                        location=Vector3(-50, -500,ONGROUNDHEIGHT),
+                        rotation=Rotator(pitch=0, yaw=YAW_ORANGE, roll=0),
+                        velocity=Vector3(0, 0, 0),
+                    ),
+                    boost_amount=100,
+                ),
+                PLAYER_BLUE2: CarState(
+                    physics=Physics(
+                        location=Vector3(150, -500,ONGROUNDHEIGHT),
+                        rotation=Rotator(pitch=0, yaw=YAW_ORANGE, roll=0),
+                        velocity=Vector3(0, 0, 0),
+                    ),
+                    boost_amount=100,
+                ),
+            },
+        ),
+    ),
 
 
 ]
@@ -131,12 +179,19 @@ def main():
 
     print(f"Connecte. {len(TEST_STATES)} etats de test charges.\n")
 
-    for name, state in TEST_STATES:
-        input(f"Appuie sur Entree pour appliquer : {name}")
+    while True:
+        for index, (name, _) in enumerate(TEST_STATES):
+            print(f"  [{index}] {name}")
+        choice = input("\nNumero du scenario a appliquer (Entree pour quitter) : ").strip()
+        if choice == "":
+            break
+        try:
+            name, state = TEST_STATES[int(choice)]
+        except (ValueError, IndexError):
+            print("Choix invalide.\n")
+            continue
         sm.game_interface.set_game_state(state)
         print(f"-> Etat applique : {name}\n")
-
-    print("Tous les etats ont ete testes.")
 
 
 if __name__ == "__main__":

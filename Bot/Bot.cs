@@ -30,6 +30,13 @@ namespace Bot
         private GameStateMode _pendingState = GameStateMode.Contested;
         private float _pendingSince = -1f;
 
+        // Au-delà de cette dérive de cible, on recrée le Drive/Arrive au lieu de le retargeter
+        private const float RetargetDistance = 800f;
+        // Hystérésis de collecte de boost du Support : entre sous Low, sort à High
+        private const float SupportBoostLow = 30f;
+        private const float SupportBoostHigh = 60f;
+        private bool _collectingBoost;
+
         public MyBot(string botName, int botTeam, int botIndex) : base(botName, botTeam, botIndex) { }
 
         private void SetAction(IAction action, string intent)
@@ -38,11 +45,42 @@ namespace Bot
             _intent = intent;
         }
 
+        /// <summary>
+        /// Pointe un Drive vers la cible en réutilisant l'action en cours si possible.
+        /// Recréer un Drive à chaque tick remet son timeOnGround à zéro (Drive.cs:160),
+        /// ce qui interdit dodges/speedflips/wavedashes — le bot roule alors à vitesse de base.
+        /// </summary>
+        private void SetDrive(Vec3 target, string intent, bool allowDodges = true)
+        {
+            if (Action is Drive drive && _intent == intent && drive.AllowDodges == allowDodges
+                && drive.Target.Dist(target) < RetargetDistance)
+            {
+                drive.Target = target;
+                return;
+            }
+            SetAction(new Drive(Me, target, allowDodges: allowDodges), intent);
+        }
+
+        /// <summary>
+        /// Même latch que SetDrive, pour Arrive. Arrive resynchronise lui-même son Drive
+        /// interne à chaque tick (Arrive.cs:95), donc muter Target/Direction suffit.
+        /// </summary>
+        private void SetArrive(Vec3 target, Vec3 direction, string intent)
+        {
+            if (Action is Arrive arrive && _intent == intent && arrive.Target.Dist(target) < RetargetDistance)
+            {
+                arrive.Target = target;
+                arrive.Direction = direction;
+                return;
+            }
+            SetAction(new Arrive(Me, target, direction), intent);
+        }
+
         public override void Run()
         {
             if (Ball.LatestTouch != null && Ball.LatestTouch.Time != _lastLoggedTouchTime && Ball.LatestTouch.PlayerIndex == Index)
             {
-                Console.WriteLine($"[{Game.Time:F1}s][{Me.Name}] TOUCHE la balle à ({Ball.LatestTouch.Location.x:F0},{Ball.LatestTouch.Location.y:F0},{Ball.LatestTouch.Location.z:F0}) intent={_intent ?? "none"}");
+                Console.WriteLine($"[{Game.Time:F1}s][{Me.Name}#{Index}] TOUCHE la balle à ({Ball.LatestTouch.Location.x:F0},{Ball.LatestTouch.Location.y:F0},{Ball.LatestTouch.Location.z:F0}) intent={_intent ?? "none"}");
                 _lastLoggedTouchTime = Ball.LatestTouch.Time;
             }
 
@@ -50,7 +88,7 @@ namespace Bot
                 out float ourEta, out float theirEta, out float oppDist);
             GameStateMode gameState = StabilizeState(rawState);
             Role? role = LivingTeammates.Count == 1
-                ? Rotation.ComputeRole(Me, LivingTeammates[0], TheirGoal)
+                ? Rotation.ComputeRole(Me, LivingTeammates[0], TheirGoal, _lastRole)
                 : null;
 
             if (DebugMode)
@@ -67,6 +105,26 @@ namespace Bot
                     Action = null;
             }
 
+            SelectAction(gameState, fieldZone, role);
+
+            if (gameState != _lastState || fieldZone != _lastZone || role != _lastRole || _intent != _lastIntent)
+            {
+                string runningAction = Action is not null and not Drive ? $"({Action.GetType().Name})" : "";
+                string raw = rawState != gameState ? $" raw={rawState}" : "";
+                Console.WriteLine($"[{Game.Time:F1}s][{Me.Name}#{Index}] state={gameState}{raw} zone={fieldZone} role={role?.ToString() ?? "-"} intent={_intent ?? "none"}{runningAction} boost={Me.Boost:F0} dist={Me.Location.Dist(Ball.Location):F0} eta={Fmt(ourEta)}/{Fmt(theirEta)} oppDist={Fmt(oppDist)} ballV={Ball.Velocity.Length():F0} lastTouch={(Ball.LatestTouch == null ? "-" : Ball.LatestTouch.Team == Me.Team ? "nous" : "eux")}");
+                _lastState = gameState;
+                _lastZone = fieldZone;
+                _lastRole = role;
+                _lastIntent = _intent;
+            }
+        }
+
+        /// <summary>
+        /// Choisit l'action de ce tick. Séparé de Run() pour que les sorties anticipées
+        /// (branche Support) ne court-circuitent pas le log de fin de tick.
+        /// </summary>
+        private void SelectAction(GameStateMode gameState, FieldZone fieldZone, Role? role)
+        {
             if (IsKickoff && Action == null)
             {
                 if (role != Role.Support)
@@ -88,10 +146,41 @@ namespace Bot
             {
                 if (role == Role.Support)
                 {
-                    if (Me.Boost < 70)
-                        SetAction(new GetBoost(Me), "GetBoost");
-                    else
-                        SetAction(new Drive(Me, Rotation.BackupPosition(LivingTeammates[0], OurGoal)), "Drive→BackupPos");
+                    // Hystérésis 30/60 : sans bande morte le Support oscille entre collecte et placement
+                    if (Me.Boost < SupportBoostLow) _collectingBoost = true;
+                    else if (Me.Boost >= SupportBoostHigh) _collectingBoost = false;
+
+                    // Ils ont la balle : le Support est le dernier homme, il couvre le but — boost ou pas
+                    if (gameState == GameStateMode.NotPossessed)
+                    {
+                        Vec3 cover = Rotation.DefensivePosition(OurGoal);
+                        SetArrive(cover, cover.FlatDirection(Ball.Location), "Arrive→Couverture");
+                        return;
+                    }
+
+                    if (_collectingBoost)
+                    {
+                        // Ne pas recréer le GetBoost en cours : son Drive interne perdrait son timeOnGround
+                        if (Action is GetBoost)
+                            return;
+
+                        // Uniquement les gros pads goal-side de la balle : pas question de
+                        // traverser le terrain vers un coin adverse pour du boost
+                        List<Boost> safeBoosts = [];
+                        foreach (Boost b in Field.Boosts)
+                            if (b.IsLarge && (b.Location.y - Ball.Location.y) * OurGoal.Location.y > 0)
+                                safeBoosts.Add(b);
+                        if (safeBoosts.Count > 0)
+                        {
+                            SetAction(new GetBoost(Me, safeBoosts), "GetBoost");
+                            return;
+                        }
+                        // Aucun pad sûr : on se replace quand même, tant pis pour le boost
+                    }
+
+                    // Position de soutien basée sur la balle (goal-side + back post), face au jeu
+                    Vec3 backup = Rotation.BackupPosition(OurGoal);
+                    SetArrive(backup, backup.FlatDirection(Ball.Location), "Arrive→BackupPos");
                     return;
                 }
 
@@ -109,7 +198,7 @@ namespace Bot
                                 SetAction(new Fifty(), "Fifty");
                         }
                         else
-                            SetAction(new Drive(Me, OurGoal.Location + (Ball.Location - OurGoal.Location) * 0.6f), "Drive→Shadow");
+                            SetDrive(OurGoal.Location + (Ball.Location - OurGoal.Location) * 0.6f, "Drive→Shadow");
                         break;
 
                     case GameStateMode.Contested:
@@ -119,7 +208,7 @@ namespace Bot
                             if (contestedShot != null)
                                 SetAction(contestedShot, "Shot→LeurBut");
                             else
-                                SetAction(new Drive(Me, Ball.Location, allowDodges: false), "Drive→Balle");
+                                SetDrive(Ball.Location, "Drive→Balle", allowDodges: false);
                         }
                         else
                         {
@@ -131,7 +220,7 @@ namespace Bot
                                     SetAction(new Fifty(), "Fifty");
                             }
                             else
-                                SetAction(new Drive(Me, Ball.Location, allowDodges: false), "Drive→Balle");
+                                SetDrive(Ball.Location, "Drive→Balle", allowDodges: false);
                         }
                         break;
 
@@ -142,7 +231,7 @@ namespace Bot
                             if (offensiveShot != null)
                                 SetAction(offensiveShot, "Shot→LeurBut");
                             else
-                                SetAction(new Drive(Me, Ball.Location, allowDodges: false), "Drive→Balle");
+                                SetDrive(Ball.Location, "Drive→Balle", allowDodges: false);
                         }
                         else
                         {
@@ -172,7 +261,7 @@ namespace Bot
                                     if (clearShot != null)
                                         SetAction(clearShot, "Shot→Dégagement");
                                     else
-                                        SetAction(new Drive(Me, Ball.Location + ballToGoal * 300f, allowDodges: false), "Drive→Contour");
+                                        SetDrive(Ball.Location + ballToGoal * 300f, "Drive→Contour", allowDodges: false);
                                 }
                                 else
                                 {
@@ -190,24 +279,13 @@ namespace Bot
                                         Vec3 contourTarget = contourSlice != null
                                             ? contourSlice.Location + offset
                                             : Ball.Location + offset;
-                                        SetAction(new Drive(Me, contourTarget, allowDodges: false), "Drive→Contour");
+                                        SetDrive(contourTarget, "Drive→Contour", allowDodges: false);
                                     }
                                 }
                             }
                         }
                         break;
                 }
-            }
-
-            if (gameState != _lastState || fieldZone != _lastZone || role != _lastRole || _intent != _lastIntent)
-            {
-                string runningAction = Action is not null and not Drive ? $"({Action.GetType().Name})" : "";
-                string raw = rawState != gameState ? $" raw={rawState}" : "";
-                Console.WriteLine($"[{Game.Time:F1}s][{Me.Name}] state={gameState}{raw} zone={fieldZone} role={role?.ToString() ?? "-"} intent={_intent ?? "none"}{runningAction} boost={Me.Boost:F0} dist={Me.Location.Dist(Ball.Location):F0} eta={Fmt(ourEta)}/{Fmt(theirEta)} oppDist={Fmt(oppDist)} ballV={Ball.Velocity.Length():F0} lastTouch={(Ball.LatestTouch == null ? "-" : Ball.LatestTouch.Team == Me.Team ? "nous" : "eux")}");
-                _lastState = gameState;
-                _lastZone = fieldZone;
-                _lastRole = role;
-                _lastIntent = _intent;
             }
         }
 

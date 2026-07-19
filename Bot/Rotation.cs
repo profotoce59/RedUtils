@@ -16,15 +16,33 @@ namespace Bot
         // ~108°: angle between (car→ball) and (ball→their goal) above which we consider the shot backwards
         private static readonly float BackwardsAngleThreshold = MathF.PI * 0.6f;
 
+        // Avantage de score requis pour prendre le rôle d'Attacker au titulaire (anti-clignotement)
+        private const float RoleSwitchMargin = 0.3f;
+
         /// <summary>
         /// Determines whether this car is the attacker or the support in a 2v2.
-        /// Both bots call this independently each tick and will agree without shared state.
+        /// Both bots call this independently each tick and will agree without shared state:
+        /// the incumbent-keeps-role conditions below are exact complements of each other.
         /// </summary>
-        public static Role ComputeRole(Car me, Car teammate, Goal theirGoal)
+        public static Role ComputeRole(Car me, Car teammate, Goal theirGoal, Role? currentRole = null)
         {
             float myScore = ComputeScore(me, theirGoal);
             float teammateScore = ComputeScore(teammate, theirGoal);
-            return myScore <= teammateScore ? Role.Attacker : Role.Support;
+
+            // Égalité parfaite (kickoff symétrique) : sans départage, chaque bot évalue
+            // « mon score <= le sien » de son côté et les DEUX se croient Attacker. L'index tranche.
+            if (myScore == teammateScore)
+                return me.Index < teammate.Index ? Role.Attacker : Role.Support;
+
+            // Hystérésis : le titulaire garde son rôle tant que l'autre ne le bat pas franchement.
+            // Sinon l'estimateur en escalier fait clignoter les rôles et les deux bots
+            // font demi-tour ensemble plusieurs fois par seconde.
+            return currentRole switch
+            {
+                Role.Attacker => myScore <= teammateScore + RoleSwitchMargin ? Role.Attacker : Role.Support,
+                Role.Support  => myScore + RoleSwitchMargin < teammateScore  ? Role.Attacker : Role.Support,
+                _             => myScore < teammateScore                     ? Role.Attacker : Role.Support,
+            };
         }
 
         /// <summary>
@@ -50,14 +68,31 @@ namespace Bot
             return eta + (angle > BackwardsAngleThreshold ? BackwardsAnglePenalty : 0f);
         }
 
+        // Distance de repli goal-side de la balle
+        private const float BackupDistance = 2500f;
+        // Décalage latéral back post : se placer du côté du poteau opposé à la balle
+        private const float BackPostOffset = 800f;
+        // Marge de sécurité avec les bords du terrain
+        private const float FieldMargin = 400f;
+
         /// <summary>
-        /// Ideal backup position: 1500 units goalside of the attacker.
-        /// Keeps the support player directly behind Player1, ready to take over.
+        /// Ideal backup position: goal-side of the BALL (not the attacker, who passes his own
+        /// placement mistakes down to us), shifted toward the back post, clamped to the field.
+        /// Being on the far post keeps the two bots off the same line: one ball can't beat both.
         /// </summary>
-        public static Vec3 BackupPosition(Car attacker, Goal ourGoal)
+        public static Vec3 BackupPosition(Goal ourGoal)
         {
-            Vec3 toGoal = (ourGoal.Location - attacker.Location).Normalize();
-            return attacker.Location + toGoal * 1500f;
+            Vec3 toGoal = Ball.Location.FlatDirection(ourGoal.Location);
+            Vec3 pos = Ball.Location + toGoal * BackupDistance;
+
+            // Back post : décalage du côté opposé à la balle
+            pos.x -= MathF.Sign(Ball.Location.x) * BackPostOffset;
+
+            // Jamais hors terrain ni derrière notre ligne de but
+            pos.x = Utils.Cap(pos.x, -Field.Width / 2f + FieldMargin, Field.Width / 2f - FieldMargin);
+            pos.y = Utils.Cap(pos.y, -Field.Length / 2f + FieldMargin, Field.Length / 2f - FieldMargin);
+            pos.z = 0f;
+            return pos;
         }
 
         // ETA advantage required before claiming (or conceding) the ball

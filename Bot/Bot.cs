@@ -144,6 +144,13 @@ namespace Bot
             }
             else if (Action == null || Action.Interruptible)
             {
+                ShotCheck defenseShotCheck = AccuratePhysics ? AccurateShotCheck : DefaultShotCheck;
+
+                // Priorités défensives (Fixes.DefensiveOverhaul) :
+                // save sur tir cadré (tous rôles), dégagement + discipline goal-side (Attacker)
+                if (TryDefensivePriority(defenseShotCheck, fieldZone, role))
+                    return;
+
                 if (role == Role.Support)
                 {
                     // Hystérésis 30/60 : sans bande morte le Support oscille entre collecte et placement
@@ -287,6 +294,93 @@ namespace Bot
                         break;
                 }
             }
+        }
+
+        /// <summary>
+        /// Priorités défensives (Fixes.DefensiveOverhaul). Retourne true si une action a été choisie.
+        /// Ordre : 1) SAVE si la prédiction voit la balle entrer dans notre but (tous rôles),
+        /// 2) DÉGAGEMENT si la balle est dangereuse dans notre zone (Attacker),
+        /// 3) GOAL-SIDE si on n'est pas entre la balle et notre but (Attacker) — anti-CSC.
+        /// </summary>
+        private bool TryDefensivePriority(ShotCheck shotCheck, FieldZone fieldZone, Role? role)
+        {
+            if (!Fixes.DefensiveOverhaul)
+                return false;
+
+            // --- 1) Tir cadré : la prédiction voit la balle franchir NOTRE ligne ---
+            // FindGoal(team) = balle marquant EN FAVEUR de team → notre but encaisse pour team adverse
+            BallSlice goalSlice = Ball.Prediction.FindGoal(1 - Me.Team);
+            if (goalSlice != null)
+            {
+                Shot save = FindShot(shotCheck, new Target(OurGoal, shootAwayFromGoal: true));
+                if (save != null)
+                {
+                    SetAction(save, "Shot→Save");
+                    return true;
+                }
+
+                // Aucun tir jouable : interception d'urgence sur la trajectoire, AVANT la ligne.
+                // wasteBoost — une save justifie de brûler du boost (Drive n'en utilise jamais sinon).
+                BallSlice intercept = Ball.Prediction.Find(s =>
+                    s.Time < goalSlice.Time && Drive.GetEta(Me, s.Location) <= s.Time - Game.Time);
+                Vec3 saveTarget = intercept != null
+                    ? intercept.Location
+                    : OurGoal.Location + OurGoal.Location.FlatDirection(Ball.Location) * 300f;
+
+                if (Action is Drive saveDrive && _intent == "Drive→Save"
+                    && saveDrive.Target.Dist(saveTarget) < RetargetDistance)
+                    saveDrive.Target = saveTarget;
+                else
+                    SetAction(new Drive(Me, saveTarget, wasteBoost: true), "Drive→Save");
+                return true;
+            }
+
+            // --- 2) & 3) réservés à l'Attacker : le Support garde sa couverture ---
+            if (role == Role.Support || fieldZone != FieldZone.Defensive)
+                return false;
+
+            Vec3 towardOurGoal = Ball.Location.FlatDirection(OurGoal.Location);
+            bool inOurThird = MathF.Abs(Ball.Location.y - OurGoal.Location.y) < 3400f;
+            bool headingToUs = Ball.Velocity.Dot(towardOurGoal) > 300f;
+            if (!inOurThird && !headingToUs)
+                return false;
+
+            // --- 2) Balle dangereuse → dégagement (tir loin de notre but) ---
+            Shot clear = FindShot(shotCheck, new Target(OurGoal, shootAwayFromGoal: true));
+            if (clear != null)
+            {
+                SetAction(clear, "Shot→Dégagement");
+                return true;
+            }
+
+            // --- 3) Pas goal-side → se replier entre la balle et notre but AVANT tout contact.
+            // C'est LE cas qui fabrique les CSC : toucher la balle en la poursuivant vers notre but.
+            if (!IsGoalSide())
+            {
+                Vec3 contour = ClampToField(Ball.Location + towardOurGoal * 1200f);
+                SetDrive(contour, "Drive→GoalSide");
+                return true;
+            }
+
+            // Goal-side, pas de tir jouable : la logique standard (Fifty / Drive) prend le relais —
+            // depuis goal-side, la poussée voiture→balle part vers le camp adverse, c'est sain.
+            return false;
+        }
+
+        /// <summary>Vrai si on est entre la balle et notre but (contact défensif sûr).</summary>
+        private bool IsGoalSide()
+        {
+            Vec3 towardOurGoal = Ball.Location.FlatDirection(OurGoal.Location);
+            return (Me.Location - Ball.Location).Normalize().Dot(towardOurGoal) > 0.2f;
+        }
+
+        /// <summary>Ramène une position dans les limites du terrain (marge 400), au sol.</summary>
+        private static Vec3 ClampToField(Vec3 pos)
+        {
+            pos.x = Utils.Cap(pos.x, -Field.Width / 2f + 400f, Field.Width / 2f - 400f);
+            pos.y = Utils.Cap(pos.y, -Field.Length / 2f + 400f, Field.Length / 2f - 400f);
+            pos.z = 0f;
+            return pos;
         }
 
         private static string Fmt(float eta) => eta == float.MaxValue ? "∞" : eta.ToString("F2");

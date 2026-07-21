@@ -11,6 +11,11 @@
   - Offensive + nous avons touché : FindShot(TheirGoal)
 - [x] **Bugs FindShot corrigés** — gap hauteur 270-299, double construction shot, division par zéro ShotValid, formule vélocité unifiée
 - [x] **AccurateShotCheck** — implémentation physique RocketSim pour comparer la précision vs DefaultShotCheck
+- [x] **Défense active** (`Fixes.DefensiveOverhaul`) — `TryDefensivePriority` dans `Bot.cs` : save si la prédiction voit la balle rentrer, dégagement en zone dangereuse, repli goal-side anti-CSC. Voir `STRATEGY.md`
+- [x] **Pressing offensif** (`Fixes.OffensivePressing`) — en `NotPossessed` + balle chez l'adversaire, on conteste au lieu de se replier. Voir `STRATEGY.md`
+- [x] **Latch des tirs** — `ShotInProgress` : un `Shot` en cours n'est plus recréé à chaque tick (il gère son propre cycle de vie : rafraîchit sa cible toutes les 0.2s et s'auto-abandonne)
+- [x] **Bug save DEF1 (`GetEta` optimiste au démarrage)** — `minSpeed = MathF.Max(..., 1400)` supposait la voiture déjà lancée à 1400 uu/s : aucun modèle d'accélération au sol n'existait dans le projet. Sur DEF1 (voiture immobile au spawn) l'ETA annonçait 1.11s pour un trajet en demandant ~1.45s → le tir n'était jouable à aucun moment. Remplacé par une intégration de la vraie courbe d'accélération (`Drive.TimeToCoverDistance`)
+- [x] **Bug save DEF1 (interception)** — la cible d'interception d'urgence (`Drive→Save`) prenait la PREMIÈRE slice atteignable (`Ball.Prediction.Find`, balayage chronologique) : un point structurellement à marge nulle où la moindre erreur de `Drive.GetEta` fait rater le save. `FindLatestInterceptableSlice` cherche maintenant depuis la ligne de but vers l'arrière et prend la DERNIÈRE slice atteignable — plus proche du but, plus de marge des deux côtés
   
 ---
 
@@ -32,7 +37,6 @@ T1 attaquant engagé / T2 back post / T3 boost dans le mauvais sens / T4 contre-
 
 ## À faire — Divers
 
-- [ ] **Défense active** — en état Defensive, Player2 devrait se positionner pour bloquer les tirs (entre balle et notre but) plutôt que juste se mettre derrière Player1
 - [ ] **Gestion du boost en jeu** — collecter en se repliant (pas seulement au kickoff)
 - [ ] **QuickShot** — utiliser pour les tirs faciles à courte distance (non utilisé actuellement)
 - [ ] **HalfFlip** — utiliser pour les demi-tours rapides

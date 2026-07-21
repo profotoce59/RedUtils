@@ -43,6 +43,45 @@ your bot will work right in the next tournament!
 1. In the "Installed Packages" section, click on the package called "RLBot.Framework".
 1. If the "Version" dropdown contains a higher version than what your project currently has, you can select that version and click the Upgrade button next to the dropdown to upgrade.
 
+## Versions multiples
+
+Pour garder une ancienne version du bot lançable pendant qu'on continue à développer sur ce
+dossier, chaque version archivée vit dans son propre `git worktree`, regroupés sous
+`../versions/` (à côté de ce dossier `RedUtils/`, pas dedans) :
+
+```
+hardcodBot/
+├── RedUtils/                    ← dev en cours (ce dossier, branche protosv1)
+└── versions/
+    └── RedUtils-v1.0.0/         ← worktree figé sur le tag protocev1.0.0
+```
+
+Chaque worktree est un checkout complet et indépendant : son propre `Bot.sln`, son propre
+`Bot/bin` une fois buildé. Rien n'est partagé avec `RedUtils/` à part l'historique git.
+
+### Archiver la version actuelle avant de continuer à modifier
+
+```bash
+# Depuis RedUtils/
+git tag <nom-version>                                          # ex: protocev1.1.0
+git worktree add ../versions/RedUtils-<nom-version> -b archive/<nom-version> <nom-version>
+```
+
+Puis dans `../versions/RedUtils-<nom-version>/Bot.cfg`, changer `name = MyBot` en
+`name = MyBot-<nom-version>` — sinon RLBotGUI affiche deux bots avec le même nom et on ne
+sait plus lequel est lequel. Enfin builder ce worktree (`dotnet build Bot.sln` depuis
+son propre dossier) et ajouter son `Bot.cfg` dans RLBotGUI comme un bot séparé — on peut
+même les faire s'affronter pour comparer les versions.
+
+### Nettoyer un worktree devenu inutile
+
+```bash
+git worktree remove ../versions/RedUtils-<nom-version>
+```
+
+(ne pas supprimer le dossier directement avec `rm -rf` — git garde une référence interne
+au worktree tant qu'on ne l'a pas retiré proprement)
+
 ## Notes
 
 - Bot name, description, etc, is configured by `Bot.cfg`

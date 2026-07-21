@@ -12,6 +12,10 @@
 | `Arrive(BackupPosition)` | Arrivée face à la balle sur la position de soutien (2500u goal-side de la balle, décalée back post) |
 | `Arrive(DefensivePosition)` | Arrivée face à la balle sur le point à 20% entre notre but et la balle (couverture dernier homme) |
 | `Drive(ShadowPosition)` | Conduite vers le point à 60% entre notre but et la balle — le bot fait face à la balle |
+| `Drive(Pressing)` | Conduite vers le point à 1100u goal-side de la balle — vient presser le porteur adverse |
+| `Shot→Save` / `Drive→Save` | Priorité défensive absolue : la balle va rentrer dans notre but, tir de dégagement ou interception d'urgence |
+| `Shot→Dégagement` | Balle dangereuse dans notre tiers (Attacker) : tir loin de notre but |
+| `Drive→GoalSide` | Repli entre la balle et notre but avant tout contact — anti-CSC |
 | `FindShot(LeurBut)` | Cherche un tir vers le but adverse |
 | `FindShot(Dégagement)` | Cherche un tir pour dégager loin de notre but |
 | `GetBoost` | Va chercher le meilleur gros boost disponible |
@@ -22,7 +26,16 @@
 
 ## Calcul de l'état de possession
 
-ETA = temps avant que le joueur puisse intercepter un slice de `Ball.Prediction`.
+ETA = temps avant que le joueur puisse intercepter un slice de `Ball.Prediction`, via `Drive.GetEta`.
+
+> **`Drive.GetEta` — modèle d'accélération.** Le calcul intègre la vraie courbe d'accélération au sol
+> depuis la vitesse **actuelle** de la voiture (`Drive.TimeToCoverDistance`) : throttle de 1600 uu/s²
+> à l'arrêt jusqu'à 160 à 1400 uu/s (0 au-delà de 1410), plus 991,667 tant qu'il reste du boost,
+> consommé à 33,3/s, plafond 2300.
+> Auparavant un `MathF.Max(..., 1400)` supposait la voiture **déjà lancée à 1400 uu/s** — aucun modèle
+> d'accélération au sol n'existait. Une voiture à l'arrêt était donc créditée d'une vitesse qu'elle
+> met ~0,8 s à atteindre : sur DEF1 l'ETA annonçait 1,11 s pour un trajet en demandant 1,45 s, et le
+> bot s'engageait sur des interceptions physiquement hors de portée (il « se faisait outspeed »).
 `ourEta` = min sur notre équipe, `theirEta` = min sur l'équipe adverse **− 0.15s**
 _(les adversaires flippent dans la balle, `Drive.GetEta` ne le modélise pas → on est pessimiste)_.
 
@@ -54,17 +67,43 @@ quand il diffère de l'état retenu.
 
 ## Hors kickoff
 
+### Priorités défensives (`TryDefensivePriority`, tous rôles, avant tout le reste)
+Évaluées à chaque tick avant la logique standard (Support ou Attacker). Contrôlées par les flags de `Fixes.cs`.
+
+1. **SAVE** _(si `Fixes.DefensiveOverhaul`, tous rôles)_ — `Ball.Prediction.FindGoal(adversaire)` voit la balle franchir NOTRE ligne :
+   - `FindShot(OurGoal, shootAwayFromGoal: true)` → `Shot→Save` si un tir est jouable
+   - Sinon, interception d'urgence sur la trajectoire (boost autorisé, `wasteBoost: true`) → `Drive→Save`.
+     La cible est la **dernière** slice atteignable avant la ligne de but (`FindLatestInterceptableSlice`),
+     pas la première : `Ball.Prediction.Find` balaie du plus tôt au plus tard et s'arrête à la première
+     slice tout juste atteignable — un point structurellement à marge nulle, où la moindre erreur de
+     `Drive.GetEta` fait rater le save. En cherchant depuis la ligne de but vers l'arrière, la dernière
+     slice atteignable est plus proche du but : moins de distance à couvrir, plus de temps accordé.
+2. **DÉGAGEMENT** _(Attacker uniquement, zone défensive)_ — balle dans notre tiers ou fonçant vers notre but → `FindShot(OurGoal, shootAwayFromGoal: true)` → `Shot→Dégagement`
+3. **GOAL-SIDE** _(Attacker uniquement, zone défensive, anti-CSC)_ — si on n'est pas entre la balle et notre but, on s'y replace AVANT tout contact (`Drive→GoalSide`) plutôt que de pousser la balle vers notre propre but en la poursuivant
+
+Le Support garde toujours sa couverture (jamais concerné par 2 et 3).
+
+**Latch des tirs** : un `Shot` en cours n'est pas resélectionné tant que l'intent ne change pas
+(`ShotInProgress`). Un `Shot` gère son propre cycle de vie — il rafraîchit sa cible toutes les 0.2s
+et s'auto-abandonne via ses gardes internes. Rappeler `FindShot` à chaque tick jetait cet état et
+imposait une cible choisie à froid, qui peut flip-flop d'un tick à l'autre sur les cas limites.
+
+---
+
 ### Attribution des rôles (`ComputeRole`)
 Score = ETA vers la balle + pénalité de 2s si l'angle car→balle→leur but dépasse 108°. Score le plus bas = Attacker.
 - **Départage d'égalité** : à score strictement égal (kickoff symétrique), l'index le plus bas est Attacker — sinon les deux bots se croient Attacker.
 - **Hystérésis (0.3s)** : le titulaire garde son rôle tant que l'autre ne le bat pas de 0.3s. Les deux conditions sont complémentaires, donc les deux bots restent d'accord sans état partagé.
 
 ### SUPPORT _(coéquipier présent et mon score de rôle > celui du coéquipier)_
-- État `NOT POSSESSED` _(ils ont la balle)_ → `Arrive(DefensivePosition)` face à la balle — dernier homme, il couvre le but **boost ou pas**
+- État `NOT POSSESSED` **en zone défensive** _(ils ont la balle dans notre moitié)_ → `Arrive(DefensivePosition)` face à la balle — dernier homme, il couvre le but **boost ou pas**
+  - En zone **offensive**, pas de repli : le Support monte en soutien (`Arrive(BackupPosition)` ci-dessous) pour servir de relais au pressing au lieu d'abandonner le terrain
 - Collecte de boost _(hystérésis : entre si boost < 30, sort à ≥ 60)_ → `GetBoost` limité aux **gros pads goal-side de la balle** ; s'il n'y en a aucun, on se replace sans boost plutôt que de traverser le terrain
 - Sinon → `Arrive(BackupPosition)` face à la balle
 
 `BackupPosition` = 2500u goal-side de la **balle** (pas de l'attaquant, qui transmettrait ses erreurs de placement), décalée de 800u vers le poteau **opposé** à la balle (back post — deux bots jamais sur la même ligne), bornée au terrain (marge 400u).
+
+Le décalage back post est une **rampe** sur ±1200u autour de `x = 0`, pas un `Sign()` : avec un signe, la cible saute de 1600u dès que la balle frôle l'axe central, ce qui dépasse le seuil de re-ciblage et recrée l'`Arrive` en boucle avec une direction inversée — le Support tourne alors en rond au lieu de se placer.
 
 **Latch des actions** : `Drive`/`Arrive`/`GetBoost` ne sont **pas** recréés à chaque tick (la cible est mutée si elle dérive de < 800u). Recréer un `Drive` remet son `timeOnGround` à zéro, ce qui interdit dodges/speedflips/wavedashes (`Drive.cs:160` exige 0.2s au sol) — c'était la cause des replacements lents.
 
@@ -79,7 +118,10 @@ Score = ETA vers la balle + pénalité de 2s si l'angle car→balle→leur but d
     - z < 250u → Dodge plat
     - z < 400u → Saut + Dodge
     - z ≥ 400u → Saut + Boost + Dodge (aérien)
-- Sinon → `Drive(ShadowPosition)` _(60% entre notre but et la balle)_
+- Sinon, zone **Offensive** _(balle dans leur moitié)_ → `Drive(Pressing)` — on vient à 1100u goal-side de la balle mettre la pression ; le `Fifty` ci-dessus prend le relais au contact.
+  _Le shadow à 60% depuis notre but placerait le bot au rond central : c'est un placement défensif, absurde quand la balle est chez eux._
+  _La cible est calculée depuis `Ball.Location` (fonction continue) et **non** depuis un slice d'interception : un slice atteignable saute de plusieurs milliers d'unités d'un tick à l'autre, ce qui casse le latch de `SetDrive`, recrée le `Drive` et remet son `timeOnGround` à zéro — plus aucun dodge ni speedflip, le bot traverse le terrain à vitesse de base. Les dodges sont laissés **activés** ici : c'est un déplacement longue distance, pas une approche de contact._
+- Sinon, zone **Défensive** _(balle dans notre moitié)_ → `Drive(ShadowPosition)` _(60% entre notre but et la balle)_
 
 #### CONTESTED _(ETAs proches, ou balle-projectile adverse, ou adversaire contestable < 0.9s)_
 - Zone Offensive _(balle dans leur moitié)_  →  `FindShot(LeurBut)` | `Drive(Balle)`

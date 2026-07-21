@@ -84,12 +84,18 @@ namespace RedUtils
 
 			if (goalLine.Cross(-Vec3.Up).Dot(ball.location - (TopLeft + BottomRight) / 2) > 0)
 			{
-				float time = MathF.Abs((ball.location - TopLeft).Dot(goalLine.Cross(-Vec3.Up)) / ball.velocity.Dot(goalLine.Cross(-Vec3.Up)));
+				// Vitesse (ou direction bornée) sans composante vers le but → dénominateur 0, donc
+				// NaN, qui fait planter MathF.Sign plus loin dans Drive.GetDistance. Même remède que
+				// Utils.TimeToJump / Car.PredictLandingTime : substituer un epsilon plutôt que diviser par 0
+				// (le tout est sous MathF.Abs, donc le signe de l'epsilon n'a pas d'importance).
+				float depthVel = ball.velocity.Dot(goalLine.Cross(-Vec3.Up));
+				float time = MathF.Abs((ball.location - TopLeft).Dot(goalLine.Cross(-Vec3.Up)) / (depthVel != 0 ? depthVel : 0.001f));
 				Vec3 target = TargetSurface.Limit(ball.PredictLocation(time));
 				Vec3 directionClampedHorizontally = (target - ball.location).Normalize().Clamp((correctedLeft - ball.location).Normalize(), (correctedRight - ball.location).Normalize());
 				Vec3 directionClamped = directionClampedHorizontally.Clamp((correctedTop - ball.location).Normalize(), (correctedBottom - ball.location).Normalize(), goalLine);
 
-				return TargetSurface.Limit(ball.location + directionClamped * MathF.Abs((ball.location - TopLeft).Dot(goalLine.Cross(-Vec3.Up)) / directionClamped.Dot(goalLine.Cross(-Vec3.Up))));
+				float depthDir = directionClamped.Dot(goalLine.Cross(-Vec3.Up));
+				return TargetSurface.Limit(ball.location + directionClamped * MathF.Abs((ball.location - TopLeft).Dot(goalLine.Cross(-Vec3.Up)) / (depthDir != 0 ? depthDir : 0.001f)));
 			}
 			else
 			{

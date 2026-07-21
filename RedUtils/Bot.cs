@@ -76,6 +76,16 @@ namespace RedUtils
 		/// <summary>The previous moment in time. <para>Used to calculate DeltaTime</summary>
 		private float _lastTime = 0;
 
+		/// <summary>Me/Ball locations from the previous tick, used to detect a state-set (teleport)</summary>
+		private Vec3 _lastMeLocation = Vec3.Zero;
+		private Vec3 _lastBallLocation = Vec3.Zero;
+		private bool _positionsPrimed = false;
+		/// <summary>
+		/// A single-tick displacement below this is always physically explainable, so it never
+		/// triggers a false-positive teleport detection even at very small DeltaTime.
+		/// </summary>
+		private const float TeleportMargin = 400f;
+
 		//a
 		public RUBot(string botName, int botTeam, int botIndex) : base(botName, botTeam, botIndex)
 		{
@@ -96,31 +106,63 @@ namespace RedUtils
 		/// <param name="packet">Contains all information about the current game state</param>
 		private void Process(GameTickPacket packet)
 		{
+			// A reliable teleport check needs last tick's Me/Ball to still refer to the same car
+			// index and to a game that was already running - skip it across (re)initialization.
+			bool canCheckTeleport = _ready && _positionsPrimed && Cars.Count == packet.PlayersLength && Index < Cars.Count;
+			Vec3 prevMeLocation = canCheckTeleport ? Me.Location : Vec3.Zero;
+			Vec3 prevBallLocation = canCheckTeleport ? Ball.Location : Vec3.Zero;
+
 			if (Cars.Count != packet.PlayersLength)
 			{
 				// Reinitializes the cars if someone has left or joined the game
-				Cars.Initialize(packet); 
+				Cars.Initialize(packet);
 			}
 			else
 			{
 				// Updates the cars' positions, velocities, etc
-				Cars.Update(packet); 
+				Cars.Update(packet);
 			}
 			// Updates the ball's position, velocity, etc
 			Ball.Update(this, packet.Ball.Value);
 			// Updates the game's score, time, etc
 			Game.Update(packet);
 			// Updates the boost pads
-			Field.Update(packet); 
+			Field.Update(packet);
+
+			if (canCheckTeleport)
+			{
+				// A single-tick jump far beyond what physics allows at the observed DeltaTime means
+				// something external (state-setting, a test script) moved the ball or our car. The
+				// action we were mid-way through, and any latched decision state built around the
+				// old positions, is now stale - reset immediately instead of chasing a scenario that
+				// no longer exists.
+				float meLimit = MathF.Max(TeleportMargin, Car.MaxSpeed * DeltaTime * 5f);
+				float ballLimit = MathF.Max(TeleportMargin * 1.5f, Ball.MaxSpeed * DeltaTime * 5f);
+				if (prevMeLocation.Dist(Me.Location) > meLimit || prevBallLocation.Dist(Ball.Location) > ballLimit)
+				{
+					Action = null;
+					OnStateSet();
+				}
+			}
+			_positionsPrimed = true;
 
 			if (!IsKickoff && Game.IsKickoffPause && Game.IsRoundActive)
 			{
 				// Reset the action right as a kickoff starts
-				Action = null; 
+				Action = null;
 			}
 
 			IsKickoff = Game.IsKickoffPause && Game.IsRoundActive;
 		}
+
+		/// <summary>
+		/// Called the instant a teleport (state-setting) is detected on the ball or your car.
+		/// <para>Action is already reset by the time this runs. Override this to also clear any
+		/// latched decision state your strategy keeps between ticks (role hysteresis, state
+		/// stabilization timers, sticky flags...), so your bot recomputes everything fresh on the
+		/// very next tick instead of continuing to reason from before the reset.</para>
+		/// </summary>
+		protected virtual void OnStateSet() { }
 
 		/// <summary>Updates DeltaTime... pretty self explanitory</summary>
 		private void UpdateDeltaTime()

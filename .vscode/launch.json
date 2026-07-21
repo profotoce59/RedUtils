@@ -36,5 +36,14 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"
         },
+        {
+            "name": "Run state_setting_tests_eta.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/state_setting_tests_eta.py",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
     ]
 }

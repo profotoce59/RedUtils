@@ -53,7 +53,7 @@ namespace Bot
         {
             // First ball slice this car can physically reach in time
             BallSlice commitSlice = Ball.Prediction.Find(slice =>
-                Drive.GetEta(car, slice.Location) <= slice.Time - Game.Time);
+                Movement.EtaFor(car, slice.Location) <= slice.Time - Game.Time);
 
             if (commitSlice == null)
                 return float.MaxValue;
@@ -72,6 +72,8 @@ namespace Bot
         private const float BackupDistance = 2500f;
         // Décalage latéral back post : se placer du côté du poteau opposé à la balle
         private const float BackPostOffset = 800f;
+        // Largeur de la rampe du décalage back post autour de x=0 (voir BackupPosition)
+        private const float BackPostRamp = 1200f;
         // Marge de sécurité avec les bords du terrain
         private const float FieldMargin = 400f;
 
@@ -85,8 +87,11 @@ namespace Bot
             Vec3 toGoal = Ball.Location.FlatDirection(ourGoal.Location);
             Vec3 pos = Ball.Location + toGoal * BackupDistance;
 
-            // Back post : décalage du côté opposé à la balle
-            pos.x -= MathF.Sign(Ball.Location.x) * BackPostOffset;
+            // Back post : décalage du côté opposé à la balle, en RAMPE.
+            // Avec un Sign() la cible saute de 1600u dès que la balle frôle x=0 — au-delà du
+            // seuil de re-ciblage (RetargetDistance), donc l'Arrive est recréé en boucle avec
+            // une direction inversée : le Support tourne en rond au lieu de se placer.
+            pos.x -= Utils.Cap(Ball.Location.x / BackPostRamp, -1f, 1f) * BackPostOffset;
 
             // Jamais hors terrain ni derrière notre ligne de but
             pos.x = Utils.Cap(pos.x, -Field.Width / 2f + FieldMargin, Field.Width / 2f - FieldMargin);
@@ -174,7 +179,7 @@ namespace Bot
         /// <summary>Time until this car can first intercept any ball prediction slice.</summary>
         private static float FirstReachableEta(Car car)
         {
-            BallSlice slice = Ball.Prediction.Find(s => Drive.GetEta(car, s.Location) <= s.Time - Game.Time);
+            BallSlice slice = Ball.Prediction.Find(s => Movement.EtaFor(car, s.Location) <= s.Time - Game.Time);
             return slice == null ? float.MaxValue : slice.Time - Game.Time;
         }
     }

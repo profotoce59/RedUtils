@@ -203,8 +203,11 @@ namespace RedUtils
 			// How much time until we should hit the ball
 			float timeRemaining = Slice.Time - Game.Time;
 
-			// Returns true if the height of the ball is not to low, or to high, and we can get there in time
-			return Drive.GetEta(car, TargetLocation.Flatten()) < timeRemaining && TargetLocation.z >= 270 && TargetLocation.z < 510 && timeRemaining > Utils.TimeToJump(Vec3.Up, TargetLocation.z, true);
+			// Returns true if the height of the ball is not to low, or to high, and we can get there in time.
+			// The ETA accounts for ShotDirection: we don't just need to reach the point, we need to be
+			// travelling the right way when we do, which costs extra ground to line up.
+			return Drive.GetEta(car, TargetLocation.Flatten(), ShotDirection.FlatNorm()) < timeRemaining
+				&& TargetLocation.z >= 270 && TargetLocation.z < 510 && timeRemaining > Utils.TimeToJump(Vec3.Up, TargetLocation.z, true);
 		}
 	}
 }

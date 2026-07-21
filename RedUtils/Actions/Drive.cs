@@ -28,6 +28,11 @@ namespace RedUtils
 		/// <summary>How long we have spent driving on the ground</summary>
 		private float timeOnGround = 0;
 
+		/// <summary>Fraction of the trip spent lining up on the arrival direction. Mirrors Arrive.Run.</summary>
+		private const float ApproachLineUpFraction = 0.6f;
+		/// <summary>Cap on the line-up leg, expressed as seconds of travel. Mirrors Arrive.Run.</summary>
+		private const float ApproachLineUpSeconds = 1.5f;
+
 		/// <summary>How much time until we arrive at our destination</summary>
 		public float TimeRemaining { get; private set; }
 
@@ -410,7 +415,7 @@ namespace RedUtils
 			return MathF.Sqrt(MathF.Max(MathF.Pow(distance, 2) - MathF.Pow(radius, 2), 0)) + radius * angle;
 		}
 
-		/// <summary>Estimates how long it should take do drive to a given target, assuming we drive at max speed</summary>
+		/// <summary>Estimates how long it should take do drive to a given target, accelerating from the car's current speed (see TimeToCoverDistance)</summary>
 		public static float GetEta(Car car, Vec3 target)
 		{
 			float forwardsEta = GetEta(car, target, false, false);
@@ -422,8 +427,8 @@ namespace RedUtils
 			return GetEta(car, target, backwards, true);
 		}
 
-		/// <summary>Estimates how long it should take do drive to a given target, assuming we drive at max speed</summary>
-		/// <param name="allowDodges">Whether or not we plan on using dodges to gain speed</param>
+		/// <summary>Estimates how long it should take do drive to a given target, accelerating from the car's current speed (see TimeToCoverDistance)</summary>
+		/// <param name="allowDodges">Currently unused by the estimate: crediting a dodge here was measurably wrong (see the note in the forwards branch). Dodge modelling lives in Bot/Movement.cs. Kept so callers keep compiling and to record the intent.</param>
 		public static float GetEta(Car car, Vec3 target, bool allowDodges)
 		{
 			float forwardsEta = GetEta(car, target, false, false);
@@ -435,16 +440,51 @@ namespace RedUtils
 			return GetEta(car, target, backwards, allowDodges);
 		}
 
-		/// <summary>Estimates how long it should take do drive to a given target, assuming we drive at max speed</summary>
-		/// <param name="allowDodges">Whether or not we plan on using dodges to gain speed</param>
+		/// <summary>Estimates how long it should take do drive to a given target, accelerating from the car's current speed (see TimeToCoverDistance)</summary>
+		/// <param name="allowDodges">Currently unused by the estimate: crediting a dodge here was measurably wrong (see the note in the forwards branch). Dodge modelling lives in Bot/Movement.cs. Kept so callers keep compiling and to record the intent.</param>
 		/// <param name="backwards">Whether or not we are planning to drive backwards</param>
 		public static float GetEta(Car car, Vec3 target, bool backwards, bool allowDodges)
+		{
+			return GetEta(car, target, backwards, allowDodges, 0f);
+		}
+
+		/// <summary>
+		/// ETA to a target we have to reach while already travelling along <paramref name="arrivalDirection"/>
+		/// — which is what a shot needs: not just touching the ball, but hitting it the right way.
+		///
+		/// <para>The plain overloads measure the shortest path to the point and stop there. Arrive,
+		/// which is what actually drives the car, does something quite different: it aims at a point
+		/// backed off along the arrival direction so the car lines up, then runs the last stretch
+		/// straight (see Arrive.Run). That approach leg can add a large fraction of the trip when the
+		/// car starts off to the side of the shot line — distance the plain ETA never counts, so the
+		/// bot commits to shots it cannot make and ends up turning onto the ball's path too late.</para>
+		/// </summary>
+		/// <param name="arrivalDirection">Direction the car should be travelling on arrival. Zero means no constraint.</param>
+		public static float GetEta(Car car, Vec3 target, Vec3 arrivalDirection, bool allowDodges = true)
+		{
+			if (arrivalDirection.Length() < 1e-4f)
+				return GetEta(car, target, allowDodges);
+
+			// Mirrors the line-up distance Arrive uses, so the estimate matches the path actually driven
+			float directDistance = Field.DistanceBetweenPoints(car.Location, target);
+			float lineUp = MathF.Min(directDistance * ApproachLineUpFraction,
+				Utils.Cap(car.Velocity.Length(), Car.MaxThrottleSpeed, Car.MaxSpeed) * ApproachLineUpSeconds);
+
+			Vec3 approachPoint = Field.LimitToNearestSurface(target - arrivalDirection.Normalize() * lineUp);
+
+			// Turn onto the approach point, then cover the final line-up stretch in a straight line
+			return GetEta(car, approachPoint, false, allowDodges, lineUp);
+		}
+
+		/// <param name="extraStraightDistance">Extra ground covered in a straight line at the end of the drive</param>
+		private static float GetEta(Car car, Vec3 target, bool backwards, bool allowDodges, float extraStraightDistance)
 		{
 			// Gets the distance to drive to the given target, as well and the angle, and radius of the turn we have to make to face the target
 			float distance = GetDistance(car, target, backwards, out float angle, out float radius);
 			// Seperates the distance from the turn distance
 			float turnDistance = angle * radius;
 			distance -= turnDistance;
+			distance += extraStraightDistance;
 
 			// Gets the normal of the nearest surface to the car when it starts driving
 			Vec3 surfaceNormal = car.IsGrounded ? Field.NearestSurface(car.Location).Normal : Field.FindLandingSurface(car).Normal;
@@ -455,35 +495,32 @@ namespace RedUtils
 
 			if (backwards)
 			{
-				// Calculates the speed it will be moving at after the turn
-				float speed = MathF.Max(SpeedAfterTurn(-currentSpeed, angle, 0.8f), 1400);
-				// Estimates how long it will take to drive to the target backwards
-				return landingTime + turnDistance / MathF.Max(SpeedFromTurnRadius(radius), 400) + distance / speed;
+				// Speed coming out of the turn — no 1400 floor, same reasoning as the forwards case.
+				// Boost is not modelled here: it does nothing while reversing.
+				float exitSpeed = Utils.Cap(SpeedAfterTurn(-currentSpeed, angle, 0.8f), 0, Car.MaxThrottleSpeed);
+				return landingTime + turnDistance / MathF.Max(SpeedFromTurnRadius(radius), 400)
+					+ TimeToCoverDistance(exitSpeed, 0f, distance);
 			}
 			else
 			{
-				// Calculates the minimum speed of the car after the turn
-				float minSpeed = MathF.Max(SpeedAfterTurn(currentSpeed, angle), 1400);
-				// Calculates the maximum possible speed of the car after the turn
-				float finSpeed = Utils.Cap(minSpeed + Car.BoostAccel * car.Boost / Car.BoostConsumption, 1400, Car.MaxSpeed);
-				// Calculates the maximum possible distance covered while boosting
-				float distanceWhileBoosting = (MathF.Pow(finSpeed, 2) - MathF.Pow(minSpeed, 2)) / (2 * Car.BoostAccel);
+				// Speed coming out of the turn. No floor at 1400 here: the old code forced this to
+				// MaxThrottleSpeed, which pretended a car at a standstill was already at full throttle
+				// speed and made this estimate far too optimistic when starting slow.
+				float exitSpeed = Utils.Cap(SpeedAfterTurn(currentSpeed, angle), 0, Car.MaxSpeed);
+				float turnTime = turnDistance / MathF.Max(SpeedFromTurnRadius(radius), 400);
 
-				if (distance < distanceWhileBoosting)
-				{
-					// Calculates the actual maxmimum speed of the car after the turn
-					finSpeed = Utils.Cap(MathF.Sqrt(MathF.Max(MathF.Pow(minSpeed, 2) + 2 * Car.BoostAccel * distance, 0)), 1400, Car.MaxSpeed);
-					// Estimates how long it will take to drive to the target while boosting
-					return landingTime + turnDistance / MathF.Max(SpeedFromTurnRadius(radius), 400) + distance / ((minSpeed + finSpeed) / 2);
-				}
-				if (allowDodges && distance / finSpeed > 1.25f)
-				{
-					// If we have enough time to dodge, then estimate how long it will take to drive to the target while boosting, and then dodging!
-					return landingTime + turnDistance / MathF.Max(SpeedFromTurnRadius(radius), 400) + distanceWhileBoosting / ((minSpeed + finSpeed) / 2) + (distance - distanceWhileBoosting) / (finSpeed + 500);
-				}
+				// Integrate the real acceleration curve over the straight part.
+				//
+				// No dodge discount here. Crediting one unconditionally produced estimates that
+				// physics forbids: measured case E11 (2463 uu from 2291 uu/s, no boost) came out at
+				// 0.966s when the hard floor at the 2300 speed cap is 2463/2300 = 1.071s. A dodge
+				// buys nothing at the speed cap and costs recovery time everywhere else. Dropping it
+				// brought straight-line error from ~+15% down to +2/+3% across the whole bench
+				// (see state_setting_tests_eta.py). Modelling when a dodge actually pays off belongs
+				// in Bot/Movement.cs, which reproduces what Drive really does rather than an optimum.
+				float driveTime = TimeToCoverDistance(exitSpeed, car.Boost, distance);
 
-				// Estimates how long it will take to drive to the target
-				return landingTime + turnDistance / MathF.Max(SpeedFromTurnRadius(radius), 400) + distanceWhileBoosting / ((minSpeed + finSpeed) / 2) + (distance - distanceWhileBoosting) / finSpeed;
+				return landingTime + turnTime + driveTime;
 			}
 		}
 
@@ -492,6 +529,79 @@ namespace RedUtils
 		{
 			float distance = Field.DistanceBetweenPoints(car.Location, target);
 			return (distance / 2) / (car.Right * MathF.Sign(car.Right.Dot(target - car.Location))).Dot(car.Location.FlatDirection(target, car.Up));
+		}
+
+		/// <summary>
+		/// Ground acceleration from holding throttle, at a given forward speed.
+		/// Falls off linearly from ThrottleAccelZero at a standstill to ThrottleAccelMax at
+		/// ThrottleAccelKnee, then drops to 0 at MaxThrottleSpeed — throttle alone cannot push
+		/// the car past MaxThrottleSpeed, only boost can.
+		/// </summary>
+		public static float ThrottleAccel(float speed)
+		{
+			speed = MathF.Abs(speed);
+			if (speed >= Car.MaxThrottleSpeed)
+				return 0f;
+			if (speed >= Car.ThrottleAccelKnee)
+				return Utils.Lerp((speed - Car.ThrottleAccelKnee) / (Car.MaxThrottleSpeed - Car.ThrottleAccelKnee), Car.ThrottleAccelMax, 0f);
+			return Utils.Lerp(speed / Car.ThrottleAccelKnee, Car.ThrottleAccelZero, Car.ThrottleAccelMax);
+		}
+
+		/// <summary>
+		/// Estimates how long it takes to cover a distance in a straight line, starting from a given
+		/// speed, holding throttle and boosting while boost lasts.
+		///
+		/// <para>This replaces the old assumption that the car is always already at MaxThrottleSpeed
+		/// (a `MathF.Max(..., 1400)` floor). That floor treated a car at a standstill as if it were
+		/// already doing 1400 uu/s, which made GetEta wildly optimistic when starting slow — the bot
+		/// would commit to interceptions that were physically out of reach and get outrun.</para>
+		///
+		/// <para>Integrated in fixed steps rather than solved analytically: acceleration is piecewise
+		/// in speed AND changes when boost runs out, so closed form would be several cases for no
+		/// real gain. Steps are cheap — GetEta is called on many ball slices per tick, but this is
+		/// a handful of floating point ops each.</para>
+		/// </summary>
+		/// <param name="startSpeed">Forward speed at the start. Negative values are treated as 0.</param>
+		/// <param name="boostAmount">Boost available, 0-100. Pass 0 to estimate without boosting.</param>
+		/// <param name="distance">Distance to cover</param>
+		public static float TimeToCoverDistance(float startSpeed, float boostAmount, float distance)
+		{
+			if (distance <= 0f)
+				return 0f;
+
+			const float step = 1f / 60f;
+			const float maxTime = 10f;
+
+			float speed = Utils.Cap(startSpeed, 0f, Car.MaxSpeed);
+			float boost = MathF.Max(boostAmount, 0f);
+			float travelled = 0f;
+			float time = 0f;
+
+			while (travelled < distance && time < maxTime)
+			{
+				bool boosting = boost > 0f;
+				float accel = ThrottleAccel(speed) + (boosting ? Car.BoostAccel : 0f);
+				float newSpeed = Utils.Cap(speed + accel * step, 0f, Car.MaxSpeed);
+
+				// Average of the two speeds over the step — trapezoidal, keeps the error small
+				// enough at 60Hz that a finer step doesn't change the answer meaningfully.
+				float advanced = (speed + newSpeed) / 2f * step;
+
+				if (travelled + advanced >= distance)
+				{
+					// Interpolate within this step instead of overshooting by up to 1/60s
+					float remaining = distance - travelled;
+					return time + (advanced > 1e-6f ? step * (remaining / advanced) : 0f);
+				}
+
+				travelled += advanced;
+				speed = newSpeed;
+				if (boosting)
+					boost = MathF.Max(boost - Car.BoostConsumption * step, 0f);
+				time += step;
+			}
+
+			return time;
 		}
 
 		/// <summary>Returns the turn radius of the car at a given speed</summary>

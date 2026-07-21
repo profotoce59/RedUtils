@@ -269,8 +269,11 @@ namespace RedUtils
 			// La marge maintient la slice valide le temps que Run atteigne son point de saut.
 			float jumpGate = Utils.TimeToJump(surface.Normal, height) -  0.06f ;
 
-			// Returns true if we can get there in time, and the ball isn't too high to reach from jumping
-			return Drive.GetEta(car, TargetLocation) < timeRemaining && height < 270 && timeRemaining > jumpGate;
+			// Returns true if we can get there in time, and the ball isn't too high to reach from jumping.
+			// The ETA accounts for ShotDirection: we don't just need to reach the point, we need to be
+			// travelling the right way when we do, which costs extra ground to line up.
+			return Drive.GetEta(car, TargetLocation, ShotDirection.FlatNorm(surface.Normal)) < timeRemaining
+				&& height < 270 && timeRemaining > jumpGate;
 		}
 
 		/// <summary>Returns whether or not we should jump now</summary>

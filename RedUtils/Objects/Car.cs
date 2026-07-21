@@ -23,6 +23,14 @@ namespace RedUtils
 		public const float BoostConsumption = 33.3f;
 		/// <summary>The max speed of the car</summary>
 		public const float MaxSpeed = 2300f;
+		/// <summary>The fastest a car can go on throttle alone, without boosting</summary>
+		public const float MaxThrottleSpeed = 1410f;
+		/// <summary>Ground throttle acceleration at a standstill. Falls off with speed — see ThrottleAccel</summary>
+		public const float ThrottleAccelZero = 1600f;
+		/// <summary>Ground throttle acceleration just below MaxThrottleSpeed (drops to 0 at that speed)</summary>
+		public const float ThrottleAccelMax = 160f;
+		/// <summary>The speed at which throttle acceleration has decayed to ThrottleAccelMax</summary>
+		public const float ThrottleAccelKnee = 1400f;
 		/// <summary>The acceleration you get when you're on the ground that keeps you on the ground</summary>
 		public const float StickyAccel = 325f;
 		/// <summary>The maximum angular velocity of the car</summary>
@@ -253,7 +261,12 @@ namespace RedUtils
 			{
 				// If the landing position if outside of the field, we are going to be landing on a wall
 				Surface landingSurface = Field.FindLandingSurface(this);
-				landingTime = MathF.Max((Location - landingSurface.Limit(Location)).Dot(landingSurface.Normal) / Velocity.Dot(-landingSurface.Normal), 0);
+				// Vitesse nulle vers le mur (ex. saut perpendiculaire à un mur) → 0/0 = NaN, qui fait
+				// planter MathF.Sign plus loin (ex. Drive.GetDistance). Même bug déjà patché en aval
+				// dans Throttle (Tools.cs) ; on substitue un epsilon comme Utils.TimeToJump le fait
+				// pour la gravité nulle, au lieu de diviser par zéro.
+				float towardSurface = Velocity.Dot(-landingSurface.Normal);
+				landingTime = MathF.Max((Location - landingSurface.Limit(Location)).Dot(landingSurface.Normal) / (towardSurface != 0 ? towardSurface : -0.001f), 0);
 			}
 
 			return landingTime;

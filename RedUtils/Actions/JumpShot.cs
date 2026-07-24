@@ -42,6 +42,8 @@ namespace RedUtils
 		private float _latestTouchTime = -1;
 		/// <summary>When we dodge we have to let go of jump for a few frames. This counts those frames</summary>
 		private int _step = 0;
+		/// <summary>Tolerance keeping a shot valid through the launch instant (see IsValid).</summary>
+		private const float JumpMargin = 0.06f;
 		/// <summary>DEBUG mural : dernier état loggé, pour throttler la trace.
 		/// Static car l'action est recréée chaque frame (re-sélection) : des champs d'instance seraient réinitialisés.</summary>
 		private static string _dbgLastReason = null;
@@ -167,7 +169,9 @@ namespace RedUtils
 				bool abortInvalid = !ShotValid();
 				bool abortBoost = bot.Me.Boost > _startBoostAmount;
 				bool abortEta = eta > MathF.Max(timeRemaining * 1.05f, timeRemaining + 0.025f);
-				bool abortEarly = eta < timeRemaining - 0.25f && _updateTimer > _updateInterval;
+				// abortEarly (arrivée trop en avance) désactivé par défaut : il jetait la marge et
+				// bouclait avec FindShot. Voir Fixes.JumpAbortWhenEarly.
+				bool abortEarly = Fixes.JumpAbortWhenEarly && eta < timeRemaining - 0.25f && _updateTimer > _updateInterval;
 				bool doAbort = Interruptible && (abortWindow || abortLanded || abortInvalid || abortBoost || abortEta || abortEarly);
 
 				string dbgReason;
@@ -177,6 +181,14 @@ namespace RedUtils
 					Finished = true;
 					dbgReason = "ABORT[" + (abortWindow ? "window " : "") + (abortLanded ? "landed " : "") + (abortInvalid ? "invalid " : "")
 						+ (abortBoost ? "boost " : "") + (abortEta ? "eta " : "") + (abortEarly ? "early " : "") + "]";
+
+					// Pourquoi le saut ne va jamais au bout : imprime la ou les gardes qui abandonnent,
+					// avec les valeurs décisives. Une seule ligne par abandon (rare), pas de throttle.
+					if (Fixes.DebugSaveJump)
+						Console.WriteLine($"[{Game.Time:F2}s][JumpShot] {dbgReason} " +
+							$"tRem={timeRemaining:F2} tJump={timeToJump:F2} eta={eta:F2} " +
+							$"h={height:F0} ballZ={Slice.Location.z:F0} carZ={bot.Me.Location.z:F0} " +
+							$"grounded={bot.Me.IsGrounded} left={_leftGround} boost={bot.Me.Boost:F0}/{_startBoostAmount}");
 				}
 				else if (_updateTimer > _updateInterval && timeRemaining > timeToJump)
 				{
@@ -263,17 +275,24 @@ namespace RedUtils
 			Surface surface = Field.NearestSurface(TargetLocation);
 			float height = MathF.Max((TargetLocation - surface.Limit(TargetLocation)).Dot(surface.Normal), 20);
 
-			// Fix mural : sans marge, IsValid rejette la slice à tRem≈TimeToJump, soit AVANT que Run puisse
-			// sauter (tRem<timeToJump). Comme le tir est re-sélectionné chaque frame, la slice est alors
-			// abandonnée au profit d'une slice plus tardive → le saut mural ne se déclenche jamais.
-			// La marge maintient la slice valide le temps que Run atteigne son point de saut.
-			float jumpGate = Utils.TimeToJump(surface.Normal, height) -  0.06f ;
+			// The last `jumpTime` seconds before contact are spent JUMPING, not driving: the car has
+			// to be at the launch point that early. Subtracting jumpTime from the drive budget is the
+			// whole point — checking `GetEta < timeRemaining` (arrive by contact) green-lit shots the
+			// car reached only ~0.06s before contact while the jump needed 0.87s, so they were
+			// validated then instantly killed by Run's `window` guard, in a loop (mesuré via
+			// Fixes.DebugSaveJump). Rejecting them early lets FindShot pick a later, lower slice the
+			// car can actually reach.
+			//
+			// JumpMargin keeps the slice valid THROUGH the launch instant: there GetEta≈0 and
+			// timeRemaining≈jumpTime, so without the margin the shot would be dropped the very frame
+			// it should jump (the original wall-jump regression). This single test subsumes the old
+			// `timeRemaining > jumpGate`.
+			float jumpTime = Utils.TimeToJump(surface.Normal, height);
 
-			// Returns true if we can get there in time, and the ball isn't too high to reach from jumping.
 			// The ETA accounts for ShotDirection: we don't just need to reach the point, we need to be
 			// travelling the right way when we do, which costs extra ground to line up.
-			return Drive.GetEta(car, TargetLocation, ShotDirection.FlatNorm(surface.Normal)) < timeRemaining
-				&& height < 270 && timeRemaining > jumpGate;
+			return Drive.GetEta(car, TargetLocation, ShotDirection.FlatNorm(surface.Normal)) < timeRemaining - jumpTime + JumpMargin
+				&& height < 270;
 		}
 
 		/// <summary>Returns whether or not we should jump now</summary>

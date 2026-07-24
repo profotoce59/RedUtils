@@ -67,11 +67,29 @@ namespace Bot
             _lastBoostCheckTime = -1f;
             _lastLoggedTouchTime = -1f;
 
+            _saveTargetTime = -1f;
+
             // Force the next Run() to log the fresh state instead of staying silent because
             // gameState/zone/role/intent happen to match what was latched before the reset.
             _lastState = (GameStateMode)(-1);
             _lastZone = (FieldZone)(-1);
             _lastIntent = null;
+
+            // Marqueur « début de scénario » : dumpe la pose exacte posée par le state setter, pour
+            // pouvoir relier un comportement bizarre à ses conditions de départ sans les deviner.
+            // yaw = cap de la voiture en degrés (0 = +x, 90 = +y vers le but orange).
+            if (Fixes.DebugShot)
+            {
+                if(Me.Name == "MyBot")
+                {
+                    float yaw = MathF.Atan2(Me.Forward.y, Me.Forward.x) * 180f / MathF.PI;
+                Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}#{Index}] ===== STATE SET ===== " +
+                    $"car=({Me.Location.x:F0},{Me.Location.y:F0}) yaw={yaw:F0}° v={Me.Velocity.Length():F0} boost={Me.Boost:F0} | " +
+                    $"ball=({Ball.Location.x:F0},{Ball.Location.y:F0},{Ball.Location.z:F0}) " +
+                    $"ballV=({Ball.Velocity.x:F0},{Ball.Velocity.y:F0},{Ball.Velocity.z:F0})");
+                }
+                
+            }
         }
 
         /// <summary>
@@ -244,8 +262,11 @@ namespace Bot
 
             if (Ball.LatestTouch != null && Ball.LatestTouch.Time != _lastLoggedTouchTime && Ball.LatestTouch.PlayerIndex == Index)
             {
-                Console.WriteLine($"[{Game.Time:F1}s][{Me.Name}#{Index}] TOUCHE la balle à ({Ball.LatestTouch.Location.x:F0},{Ball.LatestTouch.Location.y:F0},{Ball.LatestTouch.Location.z:F0}) intent={_intent ?? "none"}");
-                _lastLoggedTouchTime = Ball.LatestTouch.Time;
+                if(Me.Name == "MyBot")
+                {
+                    Console.WriteLine($"[{Game.Time:F1}s][{Me.Name}] TOUCHE la balle à ({Ball.LatestTouch.Location.x:F0},{Ball.LatestTouch.Location.y:F0},{Ball.LatestTouch.Location.z:F0}) intent={_intent ?? "none"}");
+                    _lastLoggedTouchTime = Ball.LatestTouch.Time;
+                }
             }
 
             GameStateMode rawState = Rotation.ComputeGameState(Me, LivingTeammates, LivingOpponents,
@@ -275,7 +296,10 @@ namespace Bot
             {
                 string runningAction = Action is not null and not Drive ? $"({Action.GetType().Name})" : "";
                 string raw = rawState != gameState ? $" raw={rawState}" : "";
-                Console.WriteLine($"[{Game.Time:F1}s][{Me.Name}#{Index}] state={gameState}{raw} zone={fieldZone} role={role?.ToString() ?? "-"} intent={_intent ?? "none"}{runningAction} boost={Me.Boost:F0} dist={Me.Location.Dist(Ball.Location):F0} eta={Fmt(ourEta)}/{Fmt(theirEta)} oppDist={Fmt(oppDist)} ballV={Ball.Velocity.Length():F0} lastTouch={(Ball.LatestTouch == null ? "-" : Ball.LatestTouch.Team == Me.Team ? "nous" : "eux")}");
+                if(Me.Name == "MyBot")
+                {
+                    Console.WriteLine($"[{Game.Time:F1}s][{Me.Name}] state={gameState}{raw} zone={fieldZone} role={role?.ToString() ?? "-"} intent={_intent ?? "none"}{runningAction} boost={Me.Boost:F0} dist={Me.Location.Dist(Ball.Location):F0} eta={Fmt(ourEta)}/{Fmt(theirEta)} oppDist={Fmt(oppDist)} ballV={Ball.Velocity.Length():F0} lastTouch={(Ball.LatestTouch == null ? "-" : Ball.LatestTouch.Team == Me.Team ? "nous" : "eux")}");
+                }
                 _lastState = gameState;
                 _lastZone = fieldZone;
                 _lastRole = role;
@@ -513,25 +537,44 @@ namespace Bot
             // --- 1) Tir cadré : la prédiction voit la balle franchir NOTRE ligne ---
             // FindGoal(team) = balle marquant EN FAVEUR de team → notre but encaisse pour team adverse
             BallSlice goalSlice = Ball.Prediction.FindGoal(1 - Me.Team);
+
             if (goalSlice != null)
             {
+                // Nouveau circuit unifié (Fixes.UnifiedSave) : l'action Save se place goal-side et
+                // frappe selon la hauteur en renvoyant la balle vers le camp adverse.
+                if (Fixes.UnifiedSave)
+                {
+                    if (Action is not Save)
+                        SetAction(new Save(OurGoal, ClearAimPoint()), "Save");
+                    return true;
+                }
+
+                // Ancien circuit (défaut) : tir dirigé si FindShot en trouve un jouable, sinon
+                // interception d'urgence sur la trajectoire — la voiture se met goal-side dans le
+                // chemin de la balle. Cible latchée : on garde la dernière interception connue quand
+                // un tick n'en trouve pas, au lieu de sauter au repli près-but (anti-oscillation).
                 if (ShotInProgress("Shot→Save"))
                     return true;
 
                 Shot save = FindShot(Defensible(shotCheck), ClearTarget());
                 if (save != null)
                 {
-                    LogShotPick("Shot→Save", save);
                     SetAction(save, "Shot→Save");
                     return true;
                 }
 
-                // Aucun tir jouable : interception d'urgence sur la trajectoire, AVANT la ligne.
-                // wasteBoost — une save justifie de brûler du boost (Drive n'en utilise jamais sinon).
                 BallSlice intercept = FindInterceptSlice(goalSlice.Time);
-                Vec3 saveTarget = intercept != null
-                    ? intercept.Location
-                    : OurGoal.Location + OurGoal.Location.FlatDirection(Ball.Location) * 300f;
+                Vec3 saveTarget;
+                if (intercept != null)
+                {
+                    saveTarget = GoalSideContact(intercept.Location);
+                    _saveTarget = saveTarget;
+                    _saveTargetTime = Game.Time;
+                }
+                else if (Game.Time - _saveTargetTime < SaveLatchTime)
+                    saveTarget = _saveTarget;
+                else
+                    saveTarget = OurGoal.Location + OurGoal.Location.FlatDirection(Ball.Location) * 300f;
 
                 if (Action is Drive saveDrive && _intent == "Drive→Save"
                     && saveDrive.Target.Dist(saveTarget) < RetargetDistance)
@@ -578,62 +621,57 @@ namespace Bot
         }
 
         /// <summary>
-        /// PREMIÈRE slice atteignable avant que la balle ne franchisse notre ligne.
-        ///
-        /// <para>Une version « dernière slice atteignable » a été essayée, dans l'idée qu'elle
-        /// offrirait plus de marge. C'est vrai temporellement, mais c'est un contresens défensif :
-        /// la dernière interception possible est par construction celle qui a lieu au ras du but.
-        /// Observé en jeu — la cible s'enfonçait de 4362 puis 4506 (ligne de but à 5120) et la
-        /// voiture la suivait jusque dans la cage. Sur une save on veut frapper la balle AUSSI TÔT
-        /// que possible, donc le plus loin possible de notre but.</para>
-        /// </summary>
-        private BallSlice FindInterceptSlice(float beforeTime)
-        {
-            return Ball.Prediction.Find(s =>
-                s.Time < beforeTime
-                && s.Time > Game.Time
-                && IsDefensibleContact(s.Location)
-                && Movement.EtaFor(Me, s.Location) <= s.Time - Game.Time);
-        }
-
-        /// <summary>
-        /// Enveloppe un ShotCheck en refusant les contacts trop enfoncés dans notre camp.
-        ///
-        /// <para>Sur une save, `FindShot` balaie les slices de la plus tôt à la plus tard. Si les
-        /// premières ne sont pas jouables il retient une slice plus tardive — c'est-à-dire une
-        /// balle plus proche de notre but. Comme le point de contact est goal-side de la balle, il
-        /// se retrouve alors derrière la ligne, et le bot conduit dans sa propre cage.</para>
-        ///
-        /// <para>On filtre donc sur la position de la BALLE et sur le point de contact : au-delà,
-        /// mieux vaut ne pas trouver de tir et laisser l'interception d'urgence jouer.</para>
+        /// Enveloppe un ShotCheck en refusant les contacts où la voiture serait dans son propre but.
+        /// Le point de contact d'un tir (`shot.TargetLocation`) EST déjà la position de la voiture ;
+        /// il suffit de vérifier qu'elle reste devant la ligne. Utilisé par le dégagement (priorité 2).
         /// </summary>
         private ShotCheck Defensible(ShotCheck inner)
         {
             return (slice, target) =>
             {
-                if (!IsDefensibleContact(slice.Location))
-                    return null;
                 Shot shot = inner(slice, target);
                 if (shot == null)
                     return null;
-                return IsDefensibleContact(shot.TargetLocation) ? shot : null;
+                return ContactInFrontOfGoal(shot.TargetLocation) ? shot : null;
             };
         }
 
-        /// <summary>
-        /// Vrai si toucher la balle à cet endroit a encore un sens défensif, c'est-à-dire si la
-        /// voiture peut se placer derrière elle sans être elle-même dans le but.
-        ///
-        /// <para>Sans cette garde, rien n'empêche le bot de poursuivre des slices toujours plus
-        /// profondes : chaque tick la balle avance vers la cage, la cible avec elle, et il finit
-        /// par conduire dans son propre but. L'ancienne cible de dégagement masquait le problème
-        /// par accident — elle plaçait le point de contact côté terrain (donc à l'écart du but),
-        /// pour la mauvaise raison qu'elle poussait la balle vers notre cage.</para>
-        /// </summary>
-        private bool IsDefensibleContact(Vec3 ballLocation)
+        // ---- Ancien circuit de save (Fixes.UnifiedSave == false) ----
+
+        /// <summary>Première slice dont le contact goal-side est atteignable à temps et devant la ligne.</summary>
+        private BallSlice FindInterceptSlice(float beforeTime)
         {
-            float depth = MathF.Abs(ballLocation.y);
-            return depth < Field.Length / 2f - LastDefensibleMargin;
+            return Ball.Prediction.Find(s => InterceptReachable(s, beforeTime));
+        }
+
+        /// <summary>La voiture peut-elle bloquer cette slice goal-side, à temps, sans finir dans son but ?</summary>
+        private bool InterceptReachable(BallSlice s, float beforeTime)
+        {
+            if (s.Time <= Game.Time || s.Time >= beforeTime)
+                return false;
+            Vec3 contact = GoalSideContact(s.Location);
+            return ContactInFrontOfGoal(contact)
+                && Movement.EtaFor(Me, contact) <= s.Time - Game.Time;
+        }
+
+        /// <summary>Point de contact goal-side de la balle (entre elle et notre but).</summary>
+        private Vec3 GoalSideContact(Vec3 ballLocation)
+        {
+            Vec3 toOurGoal = ballLocation.FlatDirection(OurGoal.Location);
+            return ballLocation + toOurGoal * (Ball.Radius + CarHalfLength);
+        }
+
+        /// <summary>
+        /// Vrai si la voiture, à cette position de contact, est encore DEVANT sa ligne de but.
+        ///
+        /// <para>Remplace l'ancien seuil sur la profondeur de la BALLE, qui était le mauvais critère :
+        /// un save profond en étant goal-side est parfaitement valable, ce qui compte c'est de ne pas
+        /// finir dans le filet. Ce seuil-là tombait pile sur la fenêtre atteignable (y=4220) et le
+        /// bruit d'ETA le faisait osciller un tick sur deux — mesuré via [SAVEMISS].</para>
+        /// </summary>
+        private bool ContactInFrontOfGoal(Vec3 carContactPoint)
+        {
+            return MathF.Abs(carContactPoint.y) < Field.Length / 2f - CarHalfLength;
         }
 
         /// <summary>Vrai si on est entre la balle et notre but (contact défensif sûr).</summary>
@@ -643,17 +681,9 @@ namespace Bot
             return (Me.Location - Ball.Location).Normalize().Dot(towardOurGoal) > 0.2f;
         }
 
-        // En deçà de cette distance de la ligne de but, un contact n'est plus défendable : pour se
-        // placer derrière la balle, la voiture devrait entrer dans sa propre cage.
-        //
-        // Réglé sur le cas observé : le bot poursuivait des points de contact à y=4362 puis 4506
-        // (ligne à 5120) et finissait dans le but. Il faut compter 165 uu pour le contact, la
-        // longueur de la voiture, et surtout son rayon de virage pour s'y présenter — d'où 900,
-        // qui aurait refusé les deux cibles ci-dessus.
-        //
-        // Au-delà, on ne cherche plus de tir : l'interception d'urgence prend le relais et, si elle
-        // ne trouve rien non plus, le bot se poste devant sa cage au lieu d'y plonger.
-        private const float LastDefensibleMargin = 900f;
+        // Demi-longueur de la voiture (Octane ~118). Sert à placer le contact goal-side (rayon balle
+        // + ce décalage) et à garder le nez devant la ligne de but (voir ContactInFrontOfGoal).
+        private const float CarHalfLength = 60f;
 
         // Fenêtre de dégagement : large porte posée dans la moitié adverse
         private const float ClearGateDepth = 2000f;      // à quelle profondeur dans leur camp
@@ -682,6 +712,13 @@ namespace Bot
             return new Target(
                 new Vec3(-ClearGateHalfWidth * side, gateY, ClearGateHeight),
                 new Vec3(ClearGateHalfWidth * side, gateY, 0f));
+        }
+
+        /// <summary>Centre de la porte de dégagement : point de la moitié adverse vers lequel
+        /// l'action Save renvoie la balle.</summary>
+        private Vec3 ClearAimPoint()
+        {
+            return new Vec3(0f, -Field.Side(Team) * ClearGateDepth, 0f);
         }
 
         /// <summary>Ramène une position dans les limites du terrain (marge 400), au sol.</summary>
@@ -768,8 +805,9 @@ namespace Bot
 
         private void ReportEta(string outcome, string note)
         {
+            if (Me.Name != "MyBot") return;
             float actual = Game.Time - _etaStartTime;
-            string head = $"[{Game.Time:F2}s][{Me.Name}#{Index}] [ETA] {outcome} {_etaIntent}";
+            string head = $"[{Game.Time:F2}s][{Me.Name}] [ETA] {outcome} {_etaIntent}";
             string conditions = $"dist0={_etaStartDist:F0} v0={_etaStartSpeed:F0} boost0={_etaStartBoost:F0}";
 
             if (outcome == "ARRIVE")
@@ -792,6 +830,10 @@ namespace Bot
 
         private float _lastShotTrace = -1f;
         private string _lastTracedShot = null;
+        // Ancien circuit de save : cible d'interception latchée (gardée quand un tick n'en trouve pas).
+        private Vec3 _saveTarget;
+        private float _saveTargetTime = -1f;
+        private const float SaveLatchTime = 0.4f;
 
         /// <summary>
         /// Trace un tir en cours (Fixes.DebugShot), 10x/s. Objectif : départager par la mesure les
@@ -843,13 +885,15 @@ namespace Bot
                 if (s.Time >= shot.Slice.Time) { predictedNow = s.Location; break; }
             }
             float drift = predictedNow.Dist(shot.Slice.Location);
-
-            Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}#{Index}] {(isNew ? "NEW " : "    ")}{_intent} " +
-                $"tRem={tRem:F2} dTgt={Me.Location.Dist(shot.TargetLocation):F0} v={Me.Velocity.Length():F0} boost={Me.Boost:F0} " +
-                $"cote={side:F2} derive={drift:F0} " +
-                $"shotTgt=({shot.ShotTarget.x:F0},{shot.ShotTarget.y:F0},{shot.ShotTarget.z:F0}) " +
-                $"tgtLoc=({shot.TargetLocation.x:F0},{shot.TargetLocation.y:F0},{shot.TargetLocation.z:F0}) " +
-                $"ball=({Ball.Location.x:F0},{Ball.Location.y:F0},{Ball.Location.z:F0})");
+            if(Me.Name == "MyBot")
+                {
+                Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}#{Index}] {(isNew ? "NEW " : "    ")}{_intent} " +
+                    $"tRem={tRem:F2} dTgt={Me.Location.Dist(shot.TargetLocation):F0} v={Me.Velocity.Length():F0} boost={Me.Boost:F0} " +
+                    $"cote={side:F2} derive={drift:F0} " +
+                    $"shotTgt=({shot.ShotTarget.x:F0},{shot.ShotTarget.y:F0},{shot.ShotTarget.z:F0}) " +
+                    $"tgtLoc=({shot.TargetLocation.x:F0},{shot.TargetLocation.y:F0},{shot.TargetLocation.z:F0}) " +
+                    $"ball=({Ball.Location.x:F0},{Ball.Location.y:F0},{Ball.Location.z:F0})");
+                }
         }
 
         private static string Fmt(float eta) => eta == float.MaxValue ? "∞" : eta.ToString("F2");
@@ -862,6 +906,7 @@ namespace Bot
         /// </summary>
         private void LogShotPick(string intent, Shot shot)
         {
+            if(Me.Name != "MyBot") return;
             float timeRemaining = shot.Slice.Time - Game.Time;
             // Même ETA que celui utilisé par IsValid (alignement compris), sinon la marge affichée
             // est calculée sur un trajet que le bot ne conduira pas et ne veut rien dire.
@@ -869,7 +914,7 @@ namespace Bot
             // Vitesse à laquelle Arrive va se caler pour arriver pile à l'heure (Arrive.cs:59).
             // C'est elle qui décide si le bot boost ou se laisse rouler : sous 1400, aucun boost.
             float paceSpeed = Drive.GetDistance(Me, shot.TargetLocation) / MathF.Max(timeRemaining, 0.001f);
-            Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}#{Index}] {intent} → {shot.GetType().Name} " +
+            Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}] {intent} → {shot.GetType().Name} " +
                 $"slice@{shot.Slice.Time:F2}s loc=({shot.Slice.Location.x:F0},{shot.Slice.Location.y:F0},{shot.Slice.Location.z:F0}) " +
                 $"target=({shot.TargetLocation.x:F0},{shot.TargetLocation.y:F0},{shot.TargetLocation.z:F0}) " +
                 $"carEta={carEta:F2} tRem={timeRemaining:F2} marge={timeRemaining - carEta:F2} " +

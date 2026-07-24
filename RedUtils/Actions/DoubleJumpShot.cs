@@ -40,6 +40,8 @@ namespace RedUtils
 		private float _latestTouchTime = -1;
 		/// <summary>When we double jump we have to let go of jump for a few frames and then hold jump for a few frames. This counts those frames</summary>
 		private int _step = 0;
+		/// <summary>Tolerance keeping a shot valid through the launch instant (see IsValid).</summary>
+		private const float JumpMargin = 0.06f;
 
 		/// <summary>Initializes a new double jump action, with a specific ball slice and a shot target</summary>
 		public DoubleJumpShot(Car car, BallSlice slice, Vec3 shotTarget)
@@ -130,7 +132,7 @@ namespace RedUtils
 
 				_updateTimer += bot.DeltaTime;
 				if (Interruptible && (timeRemaining < timeToJump - 0.05f || (_leftGround && bot.Me.IsGrounded) || !ShotValid() || bot.Me.Boost > _startBoostAmount ||
-					eta > MathF.Max(timeRemaining * 1.05f, timeRemaining + 0.025f) || (eta < timeRemaining - 0.25f && bot.Me.Boost > 10 && _updateTimer > _updateInterval)))
+					eta > MathF.Max(timeRemaining * 1.05f, timeRemaining + 0.025f) || (Fixes.JumpAbortWhenEarly && eta < timeRemaining - 0.25f && bot.Me.Boost > 10 && _updateTimer > _updateInterval)))
 				{
 					// If this shot is no longer valid, or we think it's possible that a better shot exists, we finish this action
 					Finished = true;
@@ -203,11 +205,15 @@ namespace RedUtils
 			// How much time until we should hit the ball
 			float timeRemaining = Slice.Time - Game.Time;
 
-			// Returns true if the height of the ball is not to low, or to high, and we can get there in time.
-			// The ETA accounts for ShotDirection: we don't just need to reach the point, we need to be
-			// travelling the right way when we do, which costs extra ground to line up.
-			return Drive.GetEta(car, TargetLocation.Flatten(), ShotDirection.FlatNorm()) < timeRemaining
-				&& TargetLocation.z >= 270 && TargetLocation.z < 510 && timeRemaining > Utils.TimeToJump(Vec3.Up, TargetLocation.z, true);
+			// Subtract the double-jump duration from the drive budget: the car must reach the launch
+			// point that early to have time to jump. Checking `GetEta < timeRemaining` (arrive by
+			// contact) validated shots the car couldn't jump in time — see JumpShot.IsValid for the
+			// full reasoning. JumpMargin keeps the slice valid through the launch instant, and this
+			// single test subsumes the old `timeRemaining > jumpTime`.
+			// The ETA accounts for ShotDirection: we need to be travelling the right way on arrival.
+			float jumpTime = Utils.TimeToJump(Vec3.Up, TargetLocation.z, true);
+			return Drive.GetEta(car, TargetLocation.Flatten(), ShotDirection.FlatNorm()) < timeRemaining - jumpTime + JumpMargin
+				&& TargetLocation.z >= 270 && TargetLocation.z < 510;
 		}
 	}
 }

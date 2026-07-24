@@ -25,6 +25,22 @@ namespace RedUtils
 		/// raison (WAIT / JUMP / ABORT-xxx). À mettre à false une fois le diagnostic terminé.</summary>
 		public static bool DebugWallJumpShot = false;
 
+		/// <summary>DEBUG — Logue POURQUOI un JumpShot s'abandonne (au sol), avec la ou les gardes qui
+		/// ont déclenché : window (trop tard pour sauter) / landed / invalid (ShotValid, la balle
+		/// dévie) / boost / eta (n'arrive pas à temps) / early (un meilleur tir semble exister).
+		/// Sert à trancher pourquoi un save à répétition ne va jamais au bout du saut.</summary>
+		public static bool DebugSaveJump = true;
+
+		/// <summary>Feature — Garde `abortEarly` du JumpShot/DoubleJumpShot.
+		/// <para><b>true</b> = comportement d'origine : le tir s'abandonne dès qu'il arrive &gt; 0.25s trop
+		/// tôt (pour laisser la stratégie re-choisir). <b>false</b> (défaut) = on la retire : le tir
+		/// commit, se met en place et ATTEND le moment du saut.</para>
+		/// <para>Mesuré : la garde jetait la marge (voiture en position 0.7s avant l'impact) et bouclait
+		/// avec FindShot — or FindShot renvoie déjà la slice la plus précoce, donc « arriver tôt » n'est
+		/// pas un signal de re-optimisation, juste une mise en place anticipée. La dérive de balle reste
+		/// couverte par abortInvalid/ShotValid. Passe à true pour comparer avec l'ancien comportement.</para></summary>
+		public static bool JumpAbortWhenEarly = false;
+
 		/// <summary>Feature — Moteur de déplacement (Bot/Movement.cs) au lieu de Drive.GetEta.
 		/// <para>Movement.Eta étalonne sur mesures ce que Drive.GetEta estimait mal : coût réel du
 		/// virage, surcoût du flip, et freinage quand la voiture s'éloigne de sa cible (le plus gros
@@ -32,6 +48,13 @@ namespace RedUtils
 		/// <para>Mettre à false pour retrouver Drive.GetEta et comparer les deux sur les mêmes
 		/// courses du banc.</para></summary>
 		public static bool MovementEngine = true;
+
+		/// <summary>Feature — Latch de la cible de save (MyBot, branche TryDefensivePriority).
+		/// <para>Garde la dernière interception connue quand FindInterceptSlice rate un tick, au lieu
+		/// de sauter au repli près-but. Corrige l'oscillation de la voiture, mais MASQUE la cause
+		/// racine (un tick sur deux raté).</para>
+		/// <para>EN PAUSE (false) pour diagnostiquer le comportement brut via les logs [SAVEMISS].</para></summary>
+		public static bool SaveTargetLatch = false;
 
 		/// <summary>DEBUG — Banc d'étalonnage de l'ETA à vitesse maximale.
 		/// <para>Quand ce flag est vrai, le bot ABANDONNE toute stratégie : il roule à fond (boost
@@ -52,6 +75,14 @@ namespace RedUtils
 		/// il s'engage sur des interceptions hors de portée) ; erreur &lt; 0 = pessimiste (le bot refuse
 		/// des tirs jouables). ABANDON = la cible a changé avant l'arrivée, mesure non conclusive.</para></summary>
 		public static bool DebugEta = true;
+
+		/// <summary>Feature — Circuit de save unifié (action Save dirigée).
+		/// <para><b>false</b> (défaut) = ancien circuit : FindShot(Save) si un tir dirigé est jouable,
+		/// sinon interception d'urgence <c>Drive→Save</c> qui se met dans la trajectoire (goal-side,
+		/// cible latchée). <b>true</b> = nouvelle action <c>Save</c> unique (approche goal-side + frappe
+		/// par hauteur + dodge dirigé), qui remplace tout le circuit.</para>
+		/// <para>Laissé désactivable pour comparer : la nouvelle action est encore en rodage.</para></summary>
+		public static bool UnifiedSave = false;
 
 		/// <summary>Feature — Refonte défensive (anti-CSC + vraies saves).
 		/// <para>Sans ce flag, comportement d'origine : sur une balle qui arrive dans notre camp le bot

@@ -107,7 +107,7 @@ TEST_STATES = [
         GameState(
             ball=BallState(physics=Physics(
                 location=Vector3(0, 0, 300),
-                velocity=Vector3(0, 1900, 350),
+                velocity=Vector3(0, 1900, 550),
                 angular_velocity=Vector3(0, 0, 0),
             )),
             cars={

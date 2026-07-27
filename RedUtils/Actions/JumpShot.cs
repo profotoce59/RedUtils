@@ -184,11 +184,11 @@ namespace RedUtils
 
 					// Pourquoi le saut ne va jamais au bout : imprime la ou les gardes qui abandonnent,
 					// avec les valeurs décisives. Une seule ligne par abandon (rare), pas de throttle.
-					if (Fixes.DebugSaveJump)
-						Console.WriteLine($"[{Game.Time:F2}s][JumpShot] {dbgReason} " +
-							$"tRem={timeRemaining:F2} tJump={timeToJump:F2} eta={eta:F2} " +
-							$"h={height:F0} ballZ={Slice.Location.z:F0} carZ={bot.Me.Location.z:F0} " +
-							$"grounded={bot.Me.IsGrounded} left={_leftGround} boost={bot.Me.Boost:F0}/{_startBoostAmount}");
+					//if (Fixes.DebugSaveJump)
+						//Console.WriteLine($"[{Game.Time:F2}s][JumpShot] {dbgReason} " +
+						//	$"tRem={timeRemaining:F2} tJump={timeToJump:F2} eta={eta:F2} " +
+						//	$"h={height:F0} ballZ={Slice.Location.z:F0} carZ={bot.Me.Location.z:F0} " +
+						//	$"grounded={bot.Me.IsGrounded} left={_leftGround} boost={bot.Me.Boost:F0}/{_startBoostAmount}");
 				}
 				else if (_updateTimer > _updateInterval && timeRemaining > timeToJump)
 				{

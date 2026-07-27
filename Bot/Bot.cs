@@ -34,6 +34,20 @@ namespace Bot
         private const float RetargetDistance = 800f;
         // Distance goal-side de la balle à laquelle l'Attacker vient presser en zone offensive
         private const float PressGap = 1100f;
+        // Distance goal-side de la balle visée pour CONTESTER en défense (2v2, Support qui couvre) :
+        // plus serrée que le pressing offensif — on ferme sur le porteur pour déclencher le Fifty.
+        private const float ContestGap = 500f;
+        // Plafond d'anticipation du contest. On vise où sera la balle quand on l'aura RÉELLEMENT
+        // rejointe (lead = notre ETA vers la balle), pas un temps fixe : plus on est loin, plus
+        // l'adversaire l'aura déplacée avant notre arrivée. Capé ici car au-delà l'extrapolation
+        // linéaire d'un dribble (l'adversaire tourne/tire) ne veut plus rien dire.
+        private const float ContestMaxLead = 2.5f;
+        // En deçà de cette distance adversaire→balle, on considère qu'il la contrôle (ou est assez
+        // près pour la disputer) : on anticipe son accélération possible vers notre but.
+        private const float ContestCarryDistance = 500f;
+        // Avancée goal-side maximale anticipée pour le contest : borne le standoff pour qu'on tienne
+        // une ligne devant le porteur sans s'effondrer dans notre propre but quand on est loin.
+        private const float ContestMaxAdvance = 1800f;
         // Hystérésis de collecte de boost du Support : entre sous Low, sort à High
         private const float SupportBoostLow = 30f;
         private const float SupportBoostHigh = 60f;
@@ -80,7 +94,7 @@ namespace Bot
             // yaw = cap de la voiture en degrés (0 = +x, 90 = +y vers le but orange).
             if (Fixes.DebugShot)
             {
-                if(Me.Name == "MyBot")
+                if(Me.Name == "MyBo")
                 {
                     float yaw = MathF.Atan2(Me.Forward.y, Me.Forward.x) * 180f / MathF.PI;
                 Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}#{Index}] ===== STATE SET ===== " +
@@ -97,15 +111,15 @@ namespace Bot
         /// Recréer un Drive à chaque tick remet son timeOnGround à zéro (Drive.cs:160),
         /// ce qui interdit dodges/speedflips/wavedashes — le bot roule alors à vitesse de base.
         /// </summary>
-        private void SetDrive(Vec3 target, string intent, bool allowDodges = true)
+        private void SetDrive(Vec3 target, string intent, bool allowDodges = true, bool wasteBoost = false)
         {
             if (Action is Drive drive && _intent == intent && drive.AllowDodges == allowDodges
-                && drive.Target.Dist(target) < RetargetDistance)
+                && drive.WasteBoost == wasteBoost && drive.Target.Dist(target) < RetargetDistance)
             {
                 drive.Target = target;
                 return;
             }
-            SetAction(new Drive(Me, target, allowDodges: allowDodges), intent);
+            SetAction(new Drive(Me, target, allowDodges: allowDodges, wasteBoost: wasteBoost), intent);
         }
 
         /// <summary>
@@ -339,7 +353,7 @@ namespace Bot
 
                 // Priorités défensives (Fixes.DefensiveOverhaul) :
                 // save sur tir cadré (tous rôles), dégagement + discipline goal-side (Attacker)
-                if (TryDefensivePriority(defenseShotCheck, fieldZone, role))
+                if (TryDefensivePriority(defenseShotCheck, gameState, fieldZone, role))
                     return;
 
                 if (role == Role.Support)
@@ -411,7 +425,20 @@ namespace Bot
                             // continue en Ball.Location, le Drive survit et le bot arrive vite.
                             // Le contact reste géré par le Fifty ci-dessus dès que la balle est à portée.
                             Vec3 pressTarget = ClampToField(Ball.Location + Ball.Location.FlatDirection(OurGoal.Location) * PressGap);
-                            SetDrive(pressTarget, "Drive→Pressing");
+                            SetDrive(pressTarget, "Drive→Pressing", wasteBoost: true);
+                        }
+                        else if (role == Role.Attacker)
+                        {
+                            // 2v2 : le premier homme CONTESTE la balle au lieu de shadow — le Support
+                            // couvre déjà le but (branche Support → DefensivePosition). En 1v1 (role == null,
+                            // pas de coéquipier vivant) on garde le shadow : sans couverture derrière, on
+                            // contient. Cible = point d'interception anticipé (ContestPoint), goal-side du
+                            // porteur (anti-CSC) ; le Fifty prend le relais dès qu'on est à portée.
+                            // Cible = point d'interception anticipé (ContestPoint) qui tient compte de
+                            // l'accélération POSSIBLE du porteur : on vise là où la balle pourrait être quand
+                            // on l'aura rejointe, pas où elle est. Le contact tombe alors au bon endroit même
+                            // si l'adversaire lance la balle — inutile de brider le flip, la cible est juste.
+                            SetDrive(ClampToField(ContestPoint()), "Drive→Contest", wasteBoost: true);
                         }
                         else
                             SetDrive(OurGoal.Location + (Ball.Location - OurGoal.Location) * 0.6f, "Drive→Shadow");
@@ -430,7 +457,7 @@ namespace Bot
                                 SetAction(contestedShot, "Shot→LeurBut");
                             }
                             else
-                                SetDrive(Ball.Location, "Drive→Balle", allowDodges: false);
+                                SetDrive(Ball.Location, "Drive→Balle", allowDodges: false, wasteBoost: true);
                         }
                         else
                         {
@@ -442,7 +469,7 @@ namespace Bot
                                     SetAction(new Fifty(), "Fifty");
                             }
                             else
-                                SetDrive(Ball.Location, "Drive→Balle", allowDodges: false);
+                                SetDrive(Ball.Location, "Drive→Balle", allowDodges: false, wasteBoost: true);
                         }
                         break;
 
@@ -459,7 +486,7 @@ namespace Bot
                                 SetAction(offensiveShot, "Shot→LeurBut");
                             }
                             else
-                                SetDrive(Ball.Location, "Drive→Balle", allowDodges: false);
+                                SetDrive(Ball.Location, "Drive→Balle", allowDodges: false, wasteBoost: true);
                         }
                         else
                         {
@@ -529,7 +556,7 @@ namespace Bot
         /// 2) DÉGAGEMENT si la balle est dangereuse dans notre zone (Attacker),
         /// 3) GOAL-SIDE si on n'est pas entre la balle et notre but (Attacker) — anti-CSC.
         /// </summary>
-        private bool TryDefensivePriority(ShotCheck shotCheck, FieldZone fieldZone, Role? role)
+        private bool TryDefensivePriority(ShotCheck shotCheck, GameStateMode gameState, FieldZone fieldZone, Role? role)
         {
             if (!Fixes.DefensiveOverhaul)
                 return false;
@@ -591,19 +618,41 @@ namespace Bot
             Vec3 towardOurGoal = Ball.Location.FlatDirection(OurGoal.Location);
             bool inOurThird = MathF.Abs(Ball.Location.y - OurGoal.Location.y) < 3400f;
             bool headingToUs = Ball.Velocity.Dot(towardOurGoal) > 300f;
-            if (!inOurThird && !headingToUs)
+
+            // Une balle simplement POSÉE dans notre tiers n'est pas dangereuse : si aucun adversaire
+            // n'est à portée de la disputer, on la CONTRÔLE (dribble/carry) au lieu de la dégager en
+            // catastrophe — c'est le cas DEF5 « balle lente non dangereuse ». Le danger réel = balle
+            // qui fonce vers notre but (headingToUs, quoi qu'il arrive), OU balle dans notre tiers
+            // qu'un adversaire peut contester. La proximité adverse est mesurée ici même (pas via le
+            // gameState stabilisé, qui accuse 0,25 s de retard après un state set et lirait Contested).
+            float oppBallDist = float.MaxValue;
+            foreach (Car opp in LivingOpponents)
+                oppBallDist = MathF.Min(oppBallDist, opp.Location.Dist(Ball.Location));
+            bool contested = oppBallDist < ContestClearDistance;
+
+            bool dangerous = headingToUs || (inOurThird && contested);
+            if (!dangerous)
                 return false;
 
             // --- 2) Balle dangereuse → dégagement (tir loin de notre but) ---
-            if (ShotInProgress("Shot→Dégagement"))
-                return true;
-
-            Shot clear = FindShot(Defensible(shotCheck), ClearTarget());
-            if (clear != null)
+            // Seulement si on n'est PAS clairement battu à la balle. Un dégagement suppose qu'on
+            // atteigne la balle en premier ; en NotPossessed l'adversaire y arrive > 0.4s avant nous
+            // (souvent il la contrôle déjà, oppDist petit). FindShot, qui ignore les touches adverses,
+            // s'accroche alors à un slice lointain que l'adversaire aura frappé bien avant — d'où un
+            // Shot→Dégagement fantôme qui flip-flop avec le Contest. On laisse la logique NotPossessed
+            // (DriveContest / Fifty) se rapprocher pour arriver en Contested et disputer le 50/50.
+            if (gameState != GameStateMode.NotPossessed)
             {
-                LogShotPick("Shot→Dégagement", clear);
-                SetAction(clear, "Shot→Dégagement");
-                return true;
+                if (ShotInProgress("Shot→Dégagement"))
+                    return true;
+
+                Shot clear = FindShot(Defensible(shotCheck), ClearTarget());
+                if (clear != null)
+                {
+                    LogShotPick("Shot→Dégagement", clear);
+                    SetAction(clear, "Shot→Dégagement");
+                    return true;
+                }
             }
 
             // --- 3) Pas goal-side → se replier entre la balle et notre but AVANT tout contact.
@@ -611,7 +660,7 @@ namespace Bot
             if (!IsGoalSide())
             {
                 Vec3 contour = ClampToField(Ball.Location + towardOurGoal * 1200f);
-                SetDrive(contour, "Drive→GoalSide");
+                SetDrive(contour, "Drive→GoalSide", wasteBoost: true);
                 return true;
             }
 
@@ -681,9 +730,75 @@ namespace Bot
             return (Me.Location - Ball.Location).Normalize().Dot(towardOurGoal) > 0.2f;
         }
 
+        /// <summary>Adversaire vivant le plus proche de la balle, avec sa distance à la balle.</summary>
+        private Car NearestOpponentToBall(out float distance)
+        {
+            Car nearest = null;
+            distance = float.MaxValue;
+            foreach (Car opp in LivingOpponents)
+            {
+                float d = opp.Location.Dist(Ball.Location);
+                if (d < distance) { distance = d; nearest = opp; }
+            }
+            return nearest;
+        }
+
+        /// <summary>
+        /// Point de contest défensif : sur la ligne balle→NOTRE but, goal-side de la balle, à un
+        /// standoff qui anticipe l'avancée de la balle VERS notre but.
+        ///
+        /// <para>On projette le long de l'axe balle→but (l'axe dangereux, invariant), PAS du cap
+        /// actuel du porteur : ce cap est volatile — il peut tourner et couper la balle derrière nous
+        /// vers le but pendant qu'on court vers son ancienne direction. En tenant la ligne du but, on
+        /// est déjà devant lui sur l'axe qui compte ; il ne peut plus aller que sur les côtés → on le
+        /// repousse vers le corner.</para>
+        ///
+        /// <para>Seule la composante d'avancée VERS le but est anticipée (le latéral vers le corner
+        /// est ignoré, on ne le suit pas). Un porteur au contact peut booster → on projette avec
+        /// accélération, bornée par ContestMaxAdvance pour ne pas s'effondrer dans le but. Le standoff
+        /// s'auto-ajuste : loin (grand ETA) on contient profond sur la ligne, près on ferme pour
+        /// challenger. Le Fifty prend le relais au contact.</para>
+        /// </summary>
+        private Vec3 ContestPoint()
+        {
+            Car carrier = NearestOpponentToBall(out float carrierDist);
+            bool canPush = carrier != null && carrierDist < ContestCarryDistance;
+
+            // Axe dangereux : de la balle vers NOTRE but. C'est la ligne qu'on tient.
+            Vec3 toGoal = Ball.Location.FlatDirection(OurGoal.Location);
+
+            // Vitesse d'avancée VERS notre but (composante sur l'axe ; négatif = s'éloigne → 0).
+            Vec3 baseVel = canPush ? carrier.Velocity : Ball.Velocity;
+            float goalwardSpeed = MathF.Max(0f, baseVel.Dot(toGoal));
+            // Un porteur au contact peut booster ; une balle libre n'accélère pas d'elle-même.
+            float accel = canPush ? Car.BoostAccel : 0f;
+
+            // Standoff = avancée anticipée (bornée) + marge goal-side pour rester DEVANT.
+            float lead = MathF.Min(Movement.EtaFor(Me, Ball.Location), ContestMaxLead);
+            float standoff = MathF.Min(ReachDistance(goalwardSpeed, accel, lead), ContestMaxAdvance) + ContestGap;
+            // Une itération de point fixe : ré-estime notre ETA vers le point ainsi obtenu.
+            lead = MathF.Min(Movement.EtaFor(Me, Ball.Location + toGoal * standoff), ContestMaxLead);
+            standoff = MathF.Min(ReachDistance(goalwardSpeed, accel, lead), ContestMaxAdvance) + ContestGap;
+
+            return Ball.Location + toGoal * standoff;
+        }
+
+        /// <summary>Distance parcourue en <paramref name="time"/> s à partir de <paramref name="speed0"/>,
+        /// en accélérant à <paramref name="accel"/> uu/s² (moyenne trapézoïdale, vitesse bornée à MaxSpeed).</summary>
+        private static float ReachDistance(float speed0, float accel, float time)
+        {
+            speed0 = Utils.Cap(speed0, 0f, Car.MaxSpeed);
+            float vEnd = MathF.Min(Car.MaxSpeed, speed0 + accel * time);
+            return (speed0 + vEnd) / 2f * time;
+        }
+
         // Demi-longueur de la voiture (Octane ~118). Sert à placer le contact goal-side (rayon balle
         // + ce décalage) et à garder le nez devant la ligne de but (voir ContactInFrontOfGoal).
         private const float CarHalfLength = 60f;
+
+        // En dessous de cette distance adversaire→balle, une balle dans notre tiers est jugée
+        // contestable et déclenche le dégagement ; au-delà on garde la possession et on contrôle.
+        private const float ContestClearDistance = 2500f;
 
         // Fenêtre de dégagement : large porte posée dans la moitié adverse
         private const float ClearGateDepth = 2000f;      // à quelle profondeur dans leur camp
@@ -805,7 +920,7 @@ namespace Bot
 
         private void ReportEta(string outcome, string note)
         {
-            if (Me.Name != "MyBot") return;
+            if (Me.Name != "MyBo") return;
             float actual = Game.Time - _etaStartTime;
             string head = $"[{Game.Time:F2}s][{Me.Name}] [ETA] {outcome} {_etaIntent}";
             string conditions = $"dist0={_etaStartDist:F0} v0={_etaStartSpeed:F0} boost0={_etaStartBoost:F0}";
@@ -885,7 +1000,7 @@ namespace Bot
                 if (s.Time >= shot.Slice.Time) { predictedNow = s.Location; break; }
             }
             float drift = predictedNow.Dist(shot.Slice.Location);
-            if(Me.Name == "MyBot")
+            if(Me.Name == "MyBo")
                 {
                 Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}#{Index}] {(isNew ? "NEW " : "    ")}{_intent} " +
                     $"tRem={tRem:F2} dTgt={Me.Location.Dist(shot.TargetLocation):F0} v={Me.Velocity.Length():F0} boost={Me.Boost:F0} " +
@@ -906,7 +1021,7 @@ namespace Bot
         /// </summary>
         private void LogShotPick(string intent, Shot shot)
         {
-            if(Me.Name != "MyBot") return;
+            if(Me.Name != "MyBo") return;
             float timeRemaining = shot.Slice.Time - Game.Time;
             // Même ETA que celui utilisé par IsValid (alignement compris), sinon la marge affichée
             // est calculée sur un trajet que le bot ne conduira pas et ne veut rien dire.

@@ -13,6 +13,7 @@
 | `Arrive(DefensivePosition)` | Arrivée face à la balle sur le point à 20% entre notre but et la balle (couverture dernier homme) |
 | `Drive(ShadowPosition)` | Conduite vers le point à 60% entre notre but et la balle — le bot fait face à la balle |
 | `Drive(Pressing)` | Conduite vers le point à 1100u goal-side de la balle — vient presser le porteur adverse |
+| `Drive(Contest)` | Conduite vers le point à 500u goal-side de la balle — l'Attacker challenge le porteur en défense (2v2, Support couvre) |
 | `Shot→Save` / `Drive→Save` | Priorité défensive absolue : la balle va rentrer dans notre but, tir de dégagement ou interception d'urgence |
 | `Shot→Dégagement` | Balle dangereuse dans notre tiers (Attacker) : tir loin de notre but |
 | `Drive→GoalSide` | Repli entre la balle et notre but avant tout contact — anti-CSC |
@@ -78,7 +79,8 @@ quand il diffère de l'état retenu.
      slice tout juste atteignable — un point structurellement à marge nulle, où la moindre erreur de
      `Drive.GetEta` fait rater le save. En cherchant depuis la ligne de but vers l'arrière, la dernière
      slice atteignable est plus proche du but : moins de distance à couvrir, plus de temps accordé.
-2. **DÉGAGEMENT** _(Attacker uniquement, zone défensive)_ — balle dans notre tiers ou fonçant vers notre but → `FindShot(OurGoal, shootAwayFromGoal: true)` → `Shot→Dégagement`
+2. **DÉGAGEMENT** _(Attacker uniquement, zone défensive)_ — déclenché si la balle est **dangereuse** : elle fonce vers notre but (`headingToUs`), OU elle est dans notre tiers **et** contestable (un adversaire à < 2500u d'elle). Une balle simplement posée sans adversaire proche n'est **pas** dégagée (cas DEF5 — on la contrôle). → `FindShot(Dégagement)` → `Shot→Dégagement`
+   - **Sauf si `NotPossessed`** _(adversaire arrive > 0.4s avant nous, souvent il contrôle déjà la balle)_ : un dégagement suppose d'atteindre la balle en premier. `FindShot` ignore les touches adverses et s'accrocherait à un slice lointain que l'adversaire aura frappé bien avant (Shot→Dégagement fantôme). On saute alors le dégagement et on laisse la logique NotPossessed (`Drive→Contest` / `Fifty`) se rapprocher pour disputer le 50/50.
 3. **GOAL-SIDE** _(Attacker uniquement, zone défensive, anti-CSC)_ — si on n'est pas entre la balle et notre but, on s'y replace AVANT tout contact (`Drive→GoalSide`) plutôt que de pousser la balle vers notre propre but en la poursuivant
 
 Le Support garde toujours sa couverture (jamais concerné par 2 et 3).
@@ -107,6 +109,8 @@ Le décalage back post est une **rampe** sur ±1200u autour de `x = 0`, pas un `
 
 **Latch des actions** : `Drive`/`Arrive`/`GetBoost` ne sont **pas** recréés à chaque tick (la cible est mutée si elle dérive de < 800u). Recréer un `Drive` remet son `timeOnGround` à zéro, ce qui interdit dodges/speedflips/wavedashes (`Drive.cs:160` exige 0.2s au sol) — c'était la cause des replacements lents.
 
+**Usage du boost (`wasteBoost`)** : un `Drive` ne boost et ne speedflip **que** si créé avec `wasteBoost: true` (`Drive.cs:143` coupe le boost sinon, `Drive.cs:170` idem pour le speedflip) — throttle seul plafonne à `MaxThrottleSpeed` (~1400 uu/s). Les déplacements où la vitesse gagne le duel sont donc en **full-send** : `Drive→Pressing`, `Drive→Contest`, `Drive→Balle`, `Drive→GoalSide` (+ `Drive→Save`). Les placements de temporisation restent **cadencés** (boost gardé pour le duel) : `Drive→Shadow`, `Drive→Contour`, et les `Arrive` de replacement (`BackupPos`, `Couverture`).
+
 ---
 
 ### ATTACKER _(coéquipier présent et mon score de rôle ≤ celui du coéquipier)_ / SOLO _(pas de coéquipier)_
@@ -121,7 +125,11 @@ Le décalage back post est une **rampe** sur ±1200u autour de `x = 0`, pas un `
 - Sinon, zone **Offensive** _(balle dans leur moitié)_ → `Drive(Pressing)` — on vient à 1100u goal-side de la balle mettre la pression ; le `Fifty` ci-dessus prend le relais au contact.
   _Le shadow à 60% depuis notre but placerait le bot au rond central : c'est un placement défensif, absurde quand la balle est chez eux._
   _La cible est calculée depuis `Ball.Location` (fonction continue) et **non** depuis un slice d'interception : un slice atteignable saute de plusieurs milliers d'unités d'un tick à l'autre, ce qui casse le latch de `SetDrive`, recrée le `Drive` et remet son `timeOnGround` à zéro — plus aucun dodge ni speedflip, le bot traverse le terrain à vitesse de base. Les dodges sont laissés **activés** ici : c'est un déplacement longue distance, pas une approche de contact._
-- Sinon, zone **Défensive** _(balle dans notre moitié)_ → `Drive(ShadowPosition)` _(60% entre notre but et la balle)_
+- Sinon, zone **Défensive** _(balle dans notre moitié)_ :
+  - **2v2** _(coéquipier vivant → rôle Attacker)_ → `Drive(Contest)` — on ferme sur le porteur pour le contester ; le Support couvre déjà le but (`DefensivePosition`), donc le premier homme peut challenger. Le `Fifty` prend le relais au contact.
+    - **Cible = ligne balle→notre but** (`ContestPoint`) : on se place **sur l'axe balle→NOTRE but**, goal-side de la balle, à un standoff. On projette le long de cet axe **invariant** (l'axe dangereux), **pas** du cap du porteur : son cap est volatile — il peut tourner et couper la balle **derrière nous** vers le but pendant qu'on court vers son ancienne direction. En tenant la ligne du but, on est déjà devant lui sur l'axe qui compte ; il ne peut aller que sur les côtés → **on le repousse vers le corner**.
+      - **Standoff anticipé** : `standoff = min(avancée_anticipée, ContestMaxAdvance=1800u) + ContestGap(500u)`. L'avancée n'est calculée que sur la composante de vitesse **vers le but** (le latéral vers le corner est ignoré, on ne le suit pas) ; si l'adversaire contrôle/est près (< `ContestCarryDistance`=500u) on l'anticipe **avec accélération boost** (`ReachDistance`), sinon vitesse constante. Le standoff **s'auto-ajuste** : loin (grand ETA, borné `ContestMaxLead`=2.5s) on contient profond sur la ligne ; près on ferme pour challenger. Le `Fifty` prend le relais au contact.
+  - **Solo** _(pas de coéquipier)_ → `Drive(ShadowPosition)` _(60% entre notre but et la balle)_ : sans couverture derrière, on contient au lieu de challenger.
 
 #### CONTESTED _(ETAs proches, ou balle-projectile adverse, ou adversaire contestable < 0.9s)_
 - Zone Offensive _(balle dans leur moitié)_  →  `FindShot(LeurBut)` | `Drive(Balle)`

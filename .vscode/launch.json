@@ -37,10 +37,10 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Run state_setting_tests_eta.py",
+            "name": "Run state_setting_tests_attack.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/state_setting_tests_eta.py",
+            "program": "${workspaceFolder}/state_setting_tests_attack.py",
             "python": "${workspaceFolder}/.venv/Scripts/python.exe",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"

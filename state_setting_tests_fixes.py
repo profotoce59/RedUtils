@@ -257,6 +257,52 @@ TEST_STATES = [
         ),
     ),
 
+    # ------------------------------------------------------------------
+        # DEF6 - Pressing : balle lente d'un adversaire sur un côté dans notre camp.
+        # ATTENDU notre bot doit effectuer un pressing,
+        # puis passer quand il est proche en 50/50--------------
+        (
+            "DEF6 - Pressing : balle lente d'un adversaire sur un côté",
+            GameState(
+                ball=BallState(physics=Physics(
+                    location=Vector3(-3000, 1800, ONGROUNDHEIGHT),
+                    velocity=Vector3(50, 0, 0),
+                    angular_velocity=Vector3(0, 0, 0),
+                )),
+                cars={
+                    PLAYER_ORANGE1: CarState(
+                        physics=Physics(
+                            location=Vector3(1600, 4200, ONGROUNDHEIGHT),
+                            rotation=Rotator(pitch=0, yaw=YAW_LEFT, roll=0),
+                            velocity=Vector3(0, 0, 0),
+                            angular_velocity=Vector3(0, 0, 0),
+                        ),
+                        boost_amount=45,
+                    ),
+                    PLAYER_ORANGE2: CarState(
+                        physics=Physics(
+                            location=Vector3(3000, 4200, ONGROUNDHEIGHT),
+                            rotation=Rotator(pitch=0, yaw=YAW_LEFT, roll=0),
+                            velocity=Vector3(0, 0, 0),
+                            angular_velocity=Vector3(0, 0, 0),
+                        ),
+                        boost_amount=45,
+                    ),
+                    PLAYER_BLUE1: CarState(
+                        physics=Physics(
+                            location=Vector3(-3000, 1500, ONGROUNDHEIGHT),
+                            rotation=Rotator(pitch=0, yaw=YAW_ORANGE, roll=0),
+                            velocity=Vector3(0, 0, 0),
+                            angular_velocity=Vector3(0, 0, 0),
+                        ),
+                        boost_amount=45,
+                    ),
+                    PLAYER_BLUE2: parked(-3700, -4800),
+                },
+            ),
+        ),
+
+
    
 
 ]

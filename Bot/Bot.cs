@@ -73,6 +73,12 @@ namespace Bot
             _benchRunning = false;
             _benchDone = false;
 
+            // ... et une mesure du banc wavedash
+            _wdRunning = false;
+            _wdDone = false;
+            _wdLeftGround = false;
+            _wdSettleTime = 0f;
+
             _stableState = GameStateMode.Contested;
             _pendingState = GameStateMode.Contested;
             _pendingSince = -1f;
@@ -166,6 +172,23 @@ namespace Bot
         private EtaBreakdown _benchDetail;
         /// <summary>Rayon d'arrivée. Drive.Finished utilise la même valeur.</summary>
         private const float BenchArrivedDist = 100f;
+
+        // --- Banc de mesure du Wavedash (Fixes.WavedashBench) ---
+        private Wavedash _wdAction;
+        private bool _wdRunning;
+        private bool _wdDone;
+        private bool _wdLeftGround;
+        private float _wdStartTime;
+        private float _wdStartSpeed;
+        private float _wdStartBoost;
+        private float _wdPeakSpeed;
+        private bool _wdReference;
+        private Vec3 _wdStartLoc;
+        private float _wdSettleTime;
+        /// <summary>Seule cette voiture mesure (PLAYER_ORANGE1 dans le script de test). Sans ce
+        /// filtre, les 4 voitures du match — qui tournent toutes ce code — déclenchent chacune leur
+        /// propre wavedash et polluent la sortie. Changer si le scénario déplace une autre voiture.</summary>
+        private const int WavedashBenchCarIndex = 2;
 
         /// <summary>
         /// Le script de test signale « conduire sans dodge » via le boost du coéquipier garé.
@@ -266,8 +289,138 @@ namespace Bot
             }
         }
 
+        /// <summary>
+        /// Le script de test choisit « conduite classique de référence » (au lieu du wavedash) via le
+        /// boost du coéquipier garé, comme le banc ETA : 0 = wavedash, ≥ 50 = référence. Évite de
+        /// recompiler entre les deux courses qu'on veut comparer.
+        /// </summary>
+        private bool BenchWavedashReference()
+        {
+            List<Car> mates = Teammates;
+            return mates.Count > 0 && mates[0].Boost >= 50;
+        }
+
+        /// <summary>
+        /// Mesure UNE manœuvre de wavedash, depuis la vitesse initiale imposée par le state setter,
+        /// throttle à fond et sans jamais demander de boost. La mesure s'arrête PILE à l'atterrissage
+        /// (fin de la manœuvre) — on ne mesure que le wavedash lui-même.
+        ///
+        /// <para>Sortie (ligne FIN) : vitesse de départ / d'arrivée (gain), pic, boost consommé (~0),
+        /// durée = temps de NON-DISPONIBILITÉ (Drive.cs impose +0.2s de timeOnGround avant de relancer
+        /// un flip), et distance parcourue PENDANT la manœuvre.</para>
+        ///
+        /// <para>Mode REFERENCE (canal boost coéquipier) : conduite classique, throttle seul, mesurée
+        /// sur la durée NOMINALE d'un wavedash (Wavedash.Duration ≈ 1.0s), pour comparer à v0 égale la
+        /// distance parcourue avec/sans wavedash — et savoir si le wavedash gagne du terrain.</para>
+        /// </summary>
+        private void RunWavedashBench()
+        {
+            // Toutes les voitures du match tournent ce code : on ne mesure que la voiture désignée
+            // par le scénario, sinon les 3 autres (garées) impriment chacune leur propre course.
+            if (Index != WavedashBenchCarIndex)
+                return;
+
+            if (_wdDone)
+                return;
+
+            if (!_wdRunning)
+            {
+                // Le state setter téléporte la voiture à z=17 : elle REBONDIT encore quelques ticks.
+                // Lancer le wavedash sur une voiture pas stabilisée corrompt le saut/dodge (bond raté).
+                // On attend donc qu'elle soit posée ET verticalement calme, de façon continue, avant de
+                // démarrer — sinon la mesure ne vaut rien.
+                if (!Me.IsGrounded || MathF.Abs(Me.Velocity.z) > 50f)
+                {
+                    _wdSettleTime = 0f;
+                    return;
+                }
+                _wdSettleTime += DeltaTime;
+                if (_wdSettleTime < 0.15f)
+                    return;
+
+                _wdReference = BenchWavedashReference();
+                _wdStartTime = Game.Time;
+                _wdStartLoc = Me.Location;
+                _wdStartSpeed = Me.Velocity.FlatLen();
+                _wdStartBoost = Me.Boost;
+                _wdPeakSpeed = _wdStartSpeed;
+                _wdLeftGround = false;
+                _wdRunning = true;
+
+                if (_wdReference)
+                {
+                    // Conduite classique : aucune action, throttle seul (réglé plus bas).
+                    _wdAction = null;
+                    Action = null;
+                }
+                else
+                {
+                    _wdAction = new Wavedash(Me.Forward);
+                    Action = _wdAction;
+                }
+
+                Console.WriteLine($"[WDBENCH] DEPART mode={(_wdReference ? "REFERENCE" : "wavedash")} " +
+                    $"v0={_wdStartSpeed:F0} boost0={_wdStartBoost:F0}");
+            }
+
+            // Throttle à fond, jamais de boost. En mode wavedash, l'action pilote saut/dodge par-dessus
+            // ce throttle ; en mode référence, la voiture avance simplement tout droit.
+            Controller.Throttle = 1;
+
+            if (!Me.IsGrounded)
+                _wdLeftGround = true;
+            _wdPeakSpeed = MathF.Max(_wdPeakSpeed, Me.Velocity.FlatLen());
+
+            float elapsed = Game.Time - _wdStartTime;
+
+            if (!_wdReference)
+            {
+                // WAVEDASH : on s'arrête PILE à l'atterrissage (fin de manœuvre), et on ne mesure que
+                // le wavedash — vitesse, gain, pic, boost, durée de non-dispo, distance parcourue.
+                if (_wdAction.Finished && _wdLeftGround)
+                {
+                    float vFin = Me.Velocity.FlatLen();
+                    float dist = Me.Location.FlatDist(_wdStartLoc);
+                    float boostUsed = _wdStartBoost - Me.Boost;
+                    Console.WriteLine($"[WDBENCH] FIN wavedash v0={_wdStartSpeed:F0} vFin={vFin:F0} " +
+                        $"gain={vFin - _wdStartSpeed:+0;-0} vPic={_wdPeakSpeed:F0} boostUtilise={boostUsed:F0} " +
+                        $"duree={elapsed:F3}s (=non-dispo, +0.2s avant relance Drive) dist={dist:F0}");
+                    _wdDone = true;
+                    Action = null;
+                }
+                else if (elapsed > 3f)
+                {
+                    Console.WriteLine($"[WDBENCH] TIMEOUT wavedash v0={_wdStartSpeed:F0} pas d'atterrissage " +
+                        $"apres {elapsed:F2}s (leftGround={(_wdLeftGround ? "oui" : "non")}) — wavedash au sol casse ?");
+                    _wdDone = true;
+                    Action = null;
+                }
+            }
+            else
+            {
+                // REFERENCE : conduite classique, mesurée sur la durée NOMINALE d'un wavedash pour
+                // comparer la distance parcourue à v0 égale (le wavedash gagne-t-il du terrain ?).
+                float refDuration = new Wavedash().Duration;
+                if (elapsed >= refDuration)
+                {
+                    float dist = Me.Location.FlatDist(_wdStartLoc);
+                    float vNow = Me.Velocity.FlatLen();
+                    Console.WriteLine($"[WDBENCH] FIN REFERENCE v0={_wdStartSpeed:F0} v={vNow:F0} dist={dist:F0} " +
+                        $"(conduite classique sur {refDuration:F2}s = duree nominale d'un wavedash)");
+                    _wdDone = true;
+                    Action = null;
+                }
+            }
+        }
+
         public override void Run()
         {
+            if (Fixes.WavedashBench)
+            {
+                RunWavedashBench();
+                return;
+            }
+
             if (Fixes.EtaBench)
             {
                 RunEtaBench();

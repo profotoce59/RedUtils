@@ -1,9 +1,10 @@
-﻿using System;
+using System;
 using RedUtils.Math;
 
 namespace RedUtils
 {
-	/// <summary>A wavedash action</summary>
+	/// <summary>A wavedash action (algo d'origine : vise l'atterrissage puis dodge près du sol),
+	/// avec un saut initial sur UN SEUL tick.</summary>
 	public class Wavedash : IAction
 	{
 		/// <summary>Whether or not this action has finished</summary>
@@ -13,13 +14,14 @@ namespace RedUtils
 
 		/// <summary>The direction we plan to wavedash in</summary>
 		public Vec3 Direction;
-		/// <summary>How much time we spend jumping, if we start on the ground</summary>
-		public float JumpTime;
-		/// <summary>The total duration of the wavedash</summary>
-		public float Duration { get { return JumpTime * 4 + 0.8f; } }
+		/// <summary>Le saut initial ne dure qu'UN tick ; JumpTime ne sert plus qu'à estimer Duration.</summary>
 
-		/// <summary>Whether or not we are going to jump</summary>
+		public float Duration { get { return 1f; } }
+
+		/// <summary>Whether we still need to fire the (single-tick) initial jump</summary>
 		private bool _jumping = true;
+		/// <summary>Whether we have actually left the ground since starting</summary>
+		private bool _leftGround = false;
 		/// <summary>When we started this action</summary>
 		private float _startTime = -1;
 		/// <summary>The inputs for the dodge direction</summary>
@@ -28,14 +30,13 @@ namespace RedUtils
 		/// <summary>Initialize a new wavedash action</summary>
 		/// <param name="direction">The direction which we will attempt to dash in.
 		/// If null, we will dash in the direction we are already going.</param>
-		/// <param name="jumpTime">How much time we spend jumping before dodging, if we start on the ground</param>
-		public Wavedash(Vec3? direction = null, float jumpTime = 0.05f)
+
+		public Wavedash(Vec3? direction = null)
 		{
 			Interruptible = false;
 			Finished = false;
 
 			Direction = direction ?? Vec3.Zero;
-			JumpTime = jumpTime;
 		}
 
 		/// <summary>Runs this wavedash action</summary>
@@ -44,16 +45,20 @@ namespace RedUtils
 			// If this action hasn't started yet
 			if (_startTime == -1)
 			{
-				// Set the start time, and whether or not we should jump
+				// Set the start time, and whether or not we should jump (only when starting grounded)
 				_startTime = Game.Time;
 				_jumping = bot.Me.IsGrounded;
 			}
-			float elapsed = Game.Time - _startTime;
 
-			// If we should be jumping, jump
-			if (elapsed < JumpTime && _jumping)
+			// Remember once we have actually left the ground
+			if (!bot.Me.IsGrounded)
+				_leftGround = true;
+
+			if (_jumping)
 			{
+				// Initial jump on a SINGLE tick (minimal jump), then we never re-jump here
 				bot.Controller.Jump = true;
+				_jumping = false;
 			}
 			else if (!bot.Me.IsGrounded && bot.Me.Location.z < 40 && bot.Me.Velocity.z < -100)
 			{
@@ -77,8 +82,11 @@ namespace RedUtils
 				Vec3 landingNormal = Field.FindLandingSurface(bot.Me).Normal;
 				bot.AimAt(bot.Me.Location + (Direction.Length() > 0 ? Direction.FlatNorm(landingNormal) : bot.Me.Velocity.FlatNorm(landingNormal)) + landingNormal * 0.2f, landingNormal);
 			}
-			else
+			else if (_leftGround)
 			{
+				// On ne termine qu'une fois REVENU au sol après avoir décollé. Sans cette garde, avec un
+				// saut d'un seul tick on finirait dès le tick suivant (la voiture est encore au sol le
+				// temps de décoller).
 				Finished = true;
 			}
 		}

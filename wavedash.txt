@@ -1,0 +1,25 @@
+ REFERENCE v0=0 v=1002 dist=590 (conduite classique sur 1,00s = duree nominale d'un wavedash)
+REFERENCE v0=404 v=1145 dist=840 (conduite classique sur 1,00s = duree nominale d'un wavedash)
+REFERENCE v0=912 v=1326 dist=1156 (conduite classique sur 1,00s = duree nominale d'un wavedash)
+REFERENCE v0=1404 v=1410 dist=1410 (conduite classique sur 1,00s = duree nominale d'un wavedash)
+
+
+
+saut 1 tick : 
+0 FIN wavedash v0=0 vAtterri=628 (gain +628) v+0,1s=719 (accel post-sol +91) vPic=719 boostUtilise=0 duree=1,033s (=non-dispo, +0.2s avant relance Drive) dist=171
+1 wavedash v0=404 vAtterri=1055 (gain +651) v+0,1s=1104 (accel post-sol +49) vPic=1104 boostUtilise=0 duree=1,033s (=non-dispo, +0.2s avant relance Drive) dist=577
+2 wavedash v0=904 vAtterri=1496 (gain +592) v+0,1s=1496 (accel post-sol +0) vPic=1496 boostUtilise=0 duree=1,033s (=non-dispo, +0.2s avant relance Drive) dist=1067
+3 wavedash v0=1412 vAtterri=1967 (gain +555) v+0,1s=1967 (accel post-sol +0) vPic=1967 boostUtilise=0 duree=1,033s (=non-dispo, +0.2s avant relance Drive) dist=1559
+4 wavedash v0=1904 vAtterri=2293 (gain +389) v+0,1s=2293 (accel post-sol -+0) vPic=2293 boostUtilise=0 duree=1,033s (=non-dispo, +0.2s avant relance Drive) dist=2044
+
+basique + saut 1 tick
+wavedash v0=0 vFin=679 gain=+679 vPic=679 boostUtilise=0 duree=0,967s (=non-dispo, +0.2s avant relance Drive) dist=147
+wavedash v0=404 vFin=1044 gain=+641 vPic=1044 boostUtilise=0 duree=0,967s (=non-dispo, +0.2s avant relance Drive) dist=518
+wavedash v0=904 vFin=1494 gain=+590 vPic=1494 boostUtilise=0 duree=0,967s (=non-dispo, +0.2s avant relance Drive) dist=976
+wavedash v0=1412 vFin=1970 gain=+558 vPic=1970 boostUtilise=0 duree=0,967s (=non-dispo, +0.2s avant relance Drive) dist=1437
+wavedash v0=1912 vFin=2284 gain=+371 vPic=2286 boostUtilise=0 duree=0,967s (=non-dispo, +0.2s avant relance Drive) dist=1905
+
+
+
+
+

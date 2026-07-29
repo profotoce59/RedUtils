@@ -67,6 +67,19 @@ namespace RedUtils
 		/// imprime une ligne [BENCH].</para></summary>
 		public static bool EtaBench = false;
 
+		/// <summary>DEBUG — Banc de mesure du Wavedash (une seule action, isolée).
+		/// <para>Quand ce flag est vrai, le bot ABANDONNE toute stratégie : depuis la pose du state
+		/// setter (vitesse initiale imposée), il déclenche UN wavedash droit devant, throttle à fond
+		/// et sans jamais demander de boost, puis imprime ce que la manœuvre a réellement produit :</para>
+		/// <para>• vitesse au sol de départ, pic atteint, vitesse une fois retombé → gain net ;</para>
+		/// <para>• boost consommé (doit être ~0 : le wavedash ne booste pas) ;</para>
+		/// <para>• durée de la manœuvre = temps de NON-DISPONIBILITÉ (saut → air → dodge d'atterrissage
+		/// → de nouveau au sol), pendant lequel aucun autre wavedash n'est possible.</para>
+		/// <para>Sert à calibrer quand il vaut le coup de remplacer un Drive/Dodge par un wavedash
+		/// (cf. Drive.cs branche sol). Utilisation : mettre à true, recompiler, lancer un match, puis
+		/// dérouler state_setting_tests_wavedash.py.</para></summary>
+		public static bool WavedashBench = false;
+
 		/// <summary>DEBUG — Banc de mesure de Drive.GetEta.
 		/// <para>À chaque cible que le bot se fixe, enregistre l'ETA PRÉDIT, puis mesure le temps
 		/// RÉELLEMENT mis pour y arriver et imprime l'écart. C'est la seule façon de savoir si GetEta

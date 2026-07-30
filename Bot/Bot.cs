@@ -183,6 +183,7 @@ namespace Bot
         private float _wdStartBoost;
         private float _wdPeakSpeed;
         private bool _wdReference;
+        private float _wdRefBoostTime;
         private Vec3 _wdStartLoc;
         private float _wdSettleTime;
         /// <summary>Seule cette voiture mesure (PLAYER_ORANGE1 dans le script de test). Sans ce
@@ -349,18 +350,21 @@ namespace Bot
 
                 if (_wdReference)
                 {
-                    // Conduite classique : aucune action, throttle seul (réglé plus bas).
+                    // Conduite classique : aucune action, throttle seul (réglé plus bas). Le canal (boost
+                    // coéquipier > 50) impose un temps de boost : (boost - 50) / 100 secondes.
+                    _wdRefBoostTime = Teammates.Count > 0 ? MathF.Max(0f, (Teammates[0].Boost - 50f) / 100f) : 0f;
                     _wdAction = null;
                     Action = null;
                 }
                 else
                 {
-                    _wdAction = new Wavedash(Me.Forward);
+                    _wdAction = new Wavedash(Me.Forward, Fixes.WavedashBenchBoost);
                     Action = _wdAction;
                 }
 
                 Console.WriteLine($"[WDBENCH] DEPART mode={(_wdReference ? "REFERENCE" : "wavedash")} " +
-                    $"v0={_wdStartSpeed:F0} boost0={_wdStartBoost:F0}");
+                    $"v0={_wdStartSpeed:F0} boost0={_wdStartBoost:F0}" +
+                    (_wdReference ? $" refBoost={_wdRefBoostTime:F2}s" : ""));
             }
 
             // Throttle à fond, jamais de boost. En mode wavedash, l'action pilote saut/dodge par-dessus
@@ -372,6 +376,10 @@ namespace Bot
             _wdPeakSpeed = MathF.Max(_wdPeakSpeed, Me.Velocity.FlatLen());
 
             float elapsed = Game.Time - _wdStartTime;
+
+            // Référence avec temps de boost imposé : on boost les premières secondes puis on coast.
+            if (_wdReference && elapsed < _wdRefBoostTime)
+                Controller.Boost = true;
 
             if (!_wdReference)
             {
@@ -398,15 +406,16 @@ namespace Bot
             }
             else
             {
-                // REFERENCE : conduite classique, mesurée sur la durée NOMINALE d'un wavedash pour
-                // comparer la distance parcourue à v0 égale (le wavedash gagne-t-il du terrain ?).
-                float refDuration = new Wavedash().Duration;
+                // REFERENCE : conduite classique, mesurée sur une fenêtre fixe de 1s (indépendante de
+                // Wavedash.Duration qui varie désormais selon la variante), pour comparer à v0 égale.
+                float refDuration = 1f;
                 if (elapsed >= refDuration)
                 {
                     float dist = Me.Location.FlatDist(_wdStartLoc);
                     float vNow = Me.Velocity.FlatLen();
                     Console.WriteLine($"[WDBENCH] FIN REFERENCE v0={_wdStartSpeed:F0} v={vNow:F0} dist={dist:F0} " +
-                        $"(conduite classique sur {refDuration:F2}s = duree nominale d'un wavedash)");
+                        $"refBoost={_wdRefBoostTime:F2}s boostUtilise={_wdStartBoost - Me.Boost:F0} " +
+                        $"(conduite classique sur {refDuration:F2}s)");
                     _wdDone = true;
                     Action = null;
                 }

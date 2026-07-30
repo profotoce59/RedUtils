@@ -162,19 +162,19 @@ namespace RedUtils
 						if (TargetSpeed > 100 + forwardSpeed)
 						{
 							// When we're moving forward, and need extra speed, look for dodges, speedflips, and wavedashes
-							if (bot.Me.Location.z < 200 && bot.Me.IsGrounded && carSpeed > 1000 && bot.Me.Forward.FlatAngle(bot.Me.Location.Direction(finalTarget)) < 0.1f && timeOnGround > 0.02f)
+							if (bot.Me.Location.z < 200 && bot.Me.IsGrounded && carSpeed > (bot.Me.Boost > 30 ? 800 : 1000) && bot.Me.Forward.FlatAngle(bot.Me.Location.Direction(finalTarget)) < 0.1f && timeOnGround > 0.02f)
 							{
-								// On the ground: keep speedflips for far targets, otherwise wavedash instead of dodge.
-								// Seuil 900 : en dessous, rouler/booster tout droit gagne plus de terrain que le
-								// wavedash (mesuré au banc) ; au-dessus il paie (le throttle plafonne vers 1410).
-								Wavedash wavedash = new Wavedash(bot.Me.Location.FlatDirection(Target));
+								// On the ground: keep speedflips for far targets, otherwise wavedash.
+								// Variante BOOSTÉE si Boost>30 (paie dès v0=800), sinon sans-boost (dès v0=1000).
+								// En dessous du seuil : rouler/booster tout droit gagne plus de terrain (mesuré au banc).
+								Wavedash wavedash = new Wavedash(bot.Me.Location.FlatDirection(Target), bot.Me.Boost > 30);
 
 								if (speedFlipTimeLeft > SpeedFlip.Duration && bot.Me.Boost > 0 && Field.InField(predictedLocation, 500) && WasteBoost)
 								{
 									// Only speedflip if we have time, and have boost
 									Action = new SpeedFlip(bot.Me.Location.FlatDirection(Target));
 								}
-								else if (timeLeft > wavedash.Duration + 0.05f) // + récup : cible pas trop proche (wavedash bloquant ~1.05s)
+								else if (timeLeft > wavedash.Duration + 0.05f) // + récup : cible pas trop proche (Duration ~0.9s boosté / ~0.97s sans)
 								{
 									// Otherwise, wavedash if we have time (shorter than a dodge → needs less room)
 									Action = wavedash;

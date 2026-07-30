@@ -3,7 +3,12 @@ REFERENCE v0=404 v=1145 dist=840 (conduite classique sur 1,00s = duree nominale 
 REFERENCE v0=912 v=1326 dist=1156 (conduite classique sur 1,00s = duree nominale d'un wavedash)
 REFERENCE v0=1404 v=1410 dist=1410 (conduite classique sur 1,00s = duree nominale d'un wavedash)
 
-
+REFERENCE v0=0 v=1046 dist=660 refBoost=0,11s boostUtilise=3 (conduite classique sur 1,00s)
+REFERENCE v0=0 v=1080 dist=707 refBoost=0,20s boostUtilise=6 (conduite classique sur 1,00s)
+REFERENCE v0=0 v=1103 dist=733 refBoost=0,25s boostUtilise=8 (conduite classique sur 1,00s)
+REFERENCE v0=912 v=1370 dist=1226 refBoost=0,11s boostUtilise=3 (conduite classique sur 1,00s)
+REFERENCE v0=912 v=1408 dist=1282 refBoost=0,20s boostUtilise=7 (conduite classique sur 1,00s)
+REFERENCE v0=904 v=1409 dist=1293 refBoost=0,25s boostUtilise=8 (conduite classique sur 1,00s)
 
 saut 1 tick : 
 0 FIN wavedash v0=0 vAtterri=628 (gain +628) v+0,1s=719 (accel post-sol +91) vPic=719 boostUtilise=0 duree=1,033s (=non-dispo, +0.2s avant relance Drive) dist=171
@@ -18,6 +23,31 @@ wavedash v0=404 vFin=1044 gain=+641 vPic=1044 boostUtilise=0 duree=0,967s (=non-
 wavedash v0=904 vFin=1494 gain=+590 vPic=1494 boostUtilise=0 duree=0,967s (=non-dispo, +0.2s avant relance Drive) dist=976
 wavedash v0=1412 vFin=1970 gain=+558 vPic=1970 boostUtilise=0 duree=0,967s (=non-dispo, +0.2s avant relance Drive) dist=1437
 wavedash v0=1912 vFin=2284 gain=+371 vPic=2286 boostUtilise=0 duree=0,967s (=non-dispo, +0.2s avant relance Drive) dist=1905
+
+
+
+BoostUpPitch = 0.8f;
+wavedash v0=0 vFin=883 gain=+883 vPic=883 boostUtilise=6 duree=0,967s (=non-dispo, +0.2s avant relance Drive) dist=319
+wavedash v0=904 vFin=1704 gain=+801 vPic=1704 boostUtilise=6 duree=0,950s (=non-dispo, +0.2s avant relance Drive) dist=1128
+BoostUpPitch = 0.7f;
+wavedash v0=0 vFin=893 gain=+893 vPic=893 boostUtilise=7 duree=0,933s (=non-dispo, +0.2s avant relance Drive) dist=300
+wavedash v0=912 vFin=1712 gain=+800 vPic=1712 boostUtilise=6 duree=0,933s (=non-dispo, +0.2s avant relance Drive) dist=1108
+BoostUpPitch = 0.6f;
+wavedash v0=0 vFin=885 gain=+885 vPic=885 boostUtilise=7 duree=0,917s (=non-dispo, +0.2s avant relance Drive) dist=285
+wavedash v0=904 vFin=1704 gain=+801 vPic=1704 boostUtilise=7 duree=0,917s (=non-dispo, +0.2s avant relance Drive) dist=1071
+
+BoostDownPitch = -0.6f; BoostUpPitch = 0.7f; Non
+
+BoostDownPitch = -0.5f; BoostUpPitch = 0.7f; Non
+wavedash v0=0 vFin=887 gain=+887 vPic=887 boostUtilise=7 duree=0,900s (=non-dispo, +0.2s avant relance Drive) dist=279
+wavedash v0=404 vFin=1247 gain=+843 vPic=1247 boostUtilise=7 duree=0,900s (=non-dispo, +0.2s avant relance Drive) dist=624
+wavedash v0=912 vFin=1711 gain=+798 vPic=1711 boostUtilise=7 duree=0,900s (=non-dispo, +0.2s avant relance Drive) dist=1058
+wavedash v0=1412 vFin=2178 gain=+766 vPic=2178 boostUtilise=7 duree=0,900s (=non-dispo, +0.2s avant relance Drive) dist=1480
+wavedash v0=1904 vFin=2290 gain=+387 vPic=2290 boostUtilise=6 duree=0,917s (=non-dispo, +0.2s avant relance Drive) dist=1919 
+
+
+Il me faut des tests à plat avec boost.
+
 
 
 

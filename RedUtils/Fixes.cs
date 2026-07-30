@@ -80,6 +80,12 @@ namespace RedUtils
 		/// dérouler state_setting_tests_wavedash.py.</para></summary>
 		public static bool WavedashBench = false;
 
+		/// <summary>DEBUG — Fait mesurer au banc Wavedash la variante BOOSTÉE (saut → nez bas + boost →
+		/// nez haut → dodge) au lieu du wavedash normal. À true, le bench crée <c>new Wavedash(dir, boost:true)</c>,
+		/// et la colonne boostUtilise devient non nulle (normal, cette variante consomme du boost).
+		/// Sert à comparer, au banc, la variante boostée à l'ordinaire sur les mêmes scénarios.</summary>
+		public static bool WavedashBenchBoost = false;
+
 		/// <summary>DEBUG — Banc de mesure de Drive.GetEta.
 		/// <para>À chaque cible que le bot se fixe, enregistre l'ETA PRÉDIT, puis mesure le temps
 		/// RÉELLEMENT mis pour y arriver et imprime l'écart. C'est la seule façon de savoir si GetEta

@@ -76,16 +76,17 @@ def parked(x, y, boost=0):
     )
 
 
-def wd(v0, boost=100, reference=False):
+def wd(v0, boost=100, reference=False, ref_boost=0.0):
     """Voiture au depart, orientee vers -y, lancee a v0 droit devant.
 
     La balle est garee loin derriere : elle n'intervient pas (le banc declenche le
     wavedash directement, sans viser la balle).
 
-    reference=True -> le coequipier gare (ORANGE2) recoit 100 de boost, ce que le bot
-    lit comme "conduite classique, PAS de wavedash" : throttle seul sur la meme fenetre
-    de temps. Comparer la meme v0 avec et sans reference dit si le wavedash gagne du
-    terrain sur une simple acceleration.
+    reference=True -> conduite classique (PAS de wavedash) : throttle seul sur la meme
+    fenetre de 1s. Le temps de boost de la reference est encode dans le boost du
+    coequipier gare (ORANGE2) : 50 = 0s (throttle pur), puis (boost-50)/100 secondes.
+    ref_boost = temps de boost voulu (s) -> ORANGE2 recoit 50 + round(ref_boost*100).
+    Comparer dist(reference+boost) a la variante BOOSTEE du wavedash a v0 egale.
     """
     return GameState(
         ball=BallState(physics=Physics(
@@ -103,7 +104,7 @@ def wd(v0, boost=100, reference=False):
                 ),
                 boost_amount=boost,
             ),
-            PLAYER_ORANGE2: parked(3800, 4900, boost=100 if reference else 0),
+            PLAYER_ORANGE2: parked(3800, 4900, boost=(50 + round(ref_boost * 100)) if reference else 0),
             PLAYER_BLUE1: parked(-3800, -4900),
             PLAYER_BLUE2: parked(-3500, -4900),
         },
@@ -133,9 +134,21 @@ TEST_STATES = [
     ("R4  REFERENCE conduite classique v0=2000", wd(2000, reference=True)),
     ("R5  REFERENCE conduite classique v0=2300", wd(2300, reference=True)),
 
+    # ===== REFERENCE + BOOST (avance 1s en boostant X secondes) =====
+    # Pour comparer a la variante BOOSTEE du wavedash. Meme fenetre 1s, throttle plein,
+    # mais on boost les X premieres secondes. Regarder dist= (terrain gagne) et
+    # boostUtilise= (cout). A comparer a la ligne FIN wavedash de la variante boostee.
+    ("RB0  v0=0, boost 0.10s", wd(0, reference=True, ref_boost=0.10)),
+    ("RB1  v0=0, boost 0.20s", wd(0, reference=True, ref_boost=0.20)),
+    ("RB2  v0=0, boost 0.25s", wd(0, reference=True, ref_boost=0.25)),
+    ("RB3  v0=1000, boost 0.10", wd(1000, reference=True, ref_boost=0.10)),
+    ("RB4  v0=1000, boost 0.20", wd(1000, reference=True, ref_boost=0.20)),
+    ("RB5  v0=1000, boost 0.25s", wd(1000, reference=True, ref_boost=0.25)),
+
     # ===== CONFIRMATION BOOST =====
     # Meme course sans boost du tout : boostUtilise doit rester 0 dans les deux cas.
     ("Z1  v0=1000, boost 0", wd(1000, boost=0)),
+    
 ]
 
 

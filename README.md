@@ -72,6 +72,7 @@ Puis dans `../versions/RedUtils-<nom-version>/Bot.cfg`, changer `name = MyBot` e
 sait plus lequel est lequel. Enfin builder ce worktree (`dotnet build Bot.sln` depuis
 son propre dossier) et ajouter son `Bot.cfg` dans RLBotGUI comme un bot séparé — on peut
 même les faire s'affronter pour comparer les versions.
+ ou .\archive-version.ps1 protocev1.1.0
 
 ### Nettoyer un worktree devenu inutile
 

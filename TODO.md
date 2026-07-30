@@ -40,6 +40,7 @@ T1 attaquant engagé / T2 back post / T3 boost dans le mauvais sens / T4 contre-
 - [ ] **Gestion du boost en jeu** — collecter en se repliant (pas seulement au kickoff)
 - [ ] **QuickShot** — utiliser pour les tirs faciles à courte distance (non utilisé actuellement)
 - [ ] **HalfFlip** — utiliser pour les demi-tours rapides
-- [ ] **Wavedash** — utiliser au lieu de SpeedFlip si pas de boost
+- [x] **Wavedash dans Drive** — remplace le Dodge sur les courses au sol. Variante boostée (`new Wavedash(dir, boost:true)`) si `Boost>30` (activation dès v0=800), sinon sans-boost (dès v0=1000). Durée de non-dispo = `Duration` (~0.9s boosté / ~0.97s sans)
+- [ ] **Modèle wavedash pour `GetEta`/`Movement`** — fonction statique `WavedashModel(v0, boost) → (time, dist)` : `time` ≈ linéaire en v0 (quasi constant), `dist` = polynôme en v0 (accél. plafonne au supersonique). Calibrer sur les mesures du banc (voir le bloc `TODO(GetEta)` dans `Wavedash.cs`). Aujourd'hui `GetEta` ne modélise pas le gain du wavedash → pessimiste quand un wavedash serait joué
 - [ ] **Action démo** — le bot va démolir le joueur adverse le plus proche
 - [ ] **Démo offensive 2v1** — P1 va démolir, P2 tire dans le but vide

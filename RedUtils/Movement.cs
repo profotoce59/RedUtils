@@ -1,8 +1,7 @@
 using System;
-using RedUtils;
 using RedUtils.Math;
 
-namespace Bot
+namespace RedUtils
 {
     /// <summary>Décomposition d'un ETA, pour voir quelle phase dérape au banc.</summary>
     public struct EtaBreakdown
@@ -31,6 +30,15 @@ namespace Bot
     /// <para>L'ETA décrit ce que la voiture FAIT, pas un optimum théorique. Un flip la ralentit
     /// quand elle a du boost : le modèle doit le dire, sinon le bot s'engage sur des interceptions
     /// qu'il ne tiendra pas.</para>
+    ///
+    /// <para><b>Emplacement (AUDIT §1.1)</b> : cette classe vivait dans <c>Bot/</c>, donc hors de
+    /// portée des actions de RedUtils — qui continuaient toutes d'appeler <c>Drive.GetEta</c>. Deux
+    /// moteurs cohabitaient : la DÉCISION (possession, rôles) sur le moteur étalonné, l'EXÉCUTION
+    /// (<c>Shot.IsValid</c>, <c>Fifty</c>, <c>Save</c>, <c>GetBoost</c>, <c>Arrive</c>) sur
+    /// l'ancien. Un tir jugé jouable par la stratégie pouvait être refusé par <c>IsValid</c>, et
+    /// inversement — d'où des oscillations qu'il fallait rattraper par des latches. Déplacée ici,
+    /// cette classe est le point d'entrée unique : <b>tout passe par <see cref="EtaFor"/></b>, et
+    /// <see cref="Fixes.MovementEngine"/> bascule les deux étages d'un seul coup.</para>
     /// </summary>
     public static class Movement
     {
@@ -77,19 +85,64 @@ namespace Bot
         /// </summary>
         private const float ControllerLoss = 1.022f;
 
+        /// <summary>Fraction du trajet consacrée à l'alignement sur la direction d'arrivée. Copie Arrive.Run.</summary>
+        private const float ApproachLineUpFraction = 0.6f;
+        /// <summary>Plafond de la phase d'alignement, exprimé en secondes de trajet. Copie Arrive.Run.</summary>
+        private const float ApproachLineUpSeconds = 1.5f;
+
         /// <summary>Temps estimé pour rejoindre la cible, en conduisant comme Drive le fait.</summary>
-        public static float Eta(Car car, Vec3 target) => Eta(car, target, out _);
+        public static float Eta(Car car, Vec3 target) => Eta(car, target, 0f, out _);
+
+        /// <summary>Idem, en exposant le détail par phase (banc d'étalonnage).</summary>
+        public static float Eta(Car car, Vec3 target, out EtaBreakdown b) => Eta(car, target, 0f, out b);
 
         /// <summary>
-        /// Point d'entrée unique pour la stratégie : passe par le moteur étalonné ou par
-        /// l'ancien Drive.GetEta selon <see cref="Fixes.MovementEngine"/>, pour pouvoir comparer
-        /// les deux sur un même scénario sans toucher aux appelants.
+        /// ETA vers une cible qu'il faut atteindre en roulant DÉJÀ le long de
+        /// <paramref name="arrivalDirection"/> — ce dont un tir a besoin : ne pas seulement toucher
+        /// la balle, mais la frapper dans le bon sens.
+        ///
+        /// <para>La surcharge simple mesure le plus court chemin jusqu'au point et s'arrête là.
+        /// <see cref="Arrive"/>, qui conduit réellement la voiture, fait autre chose : elle vise un
+        /// point reculé le long de la direction d'arrivée pour s'aligner, puis parcourt la dernière
+        /// ligne droite. Cette phase d'approche peut représenter une grande part du trajet quand la
+        /// voiture démarre sur le côté de la ligne de tir — distance que l'ETA simple ne compte
+        /// jamais, d'où des tirs pris puis manqués parce qu'on coupe la trajectoire trop tard.</para>
+        /// </summary>
+        /// <param name="arrivalDirection">Direction de déplacement souhaitée à l'arrivée. Zéro = aucune contrainte.</param>
+        public static float Eta(Car car, Vec3 target, Vec3 arrivalDirection)
+        {
+            if (arrivalDirection.Length() < 1e-4f)
+                return Eta(car, target);
+
+            // Même distance d'alignement que celle qu'Arrive utilise, pour que l'estimation porte
+            // sur le trajet réellement conduit.
+            float directDistance = Field.DistanceBetweenPoints(car.Location, target);
+            float lineUp = MathF.Min(directDistance * ApproachLineUpFraction,
+                Utils.Cap(car.Velocity.Length(), Car.MaxThrottleSpeed, Car.MaxSpeed) * ApproachLineUpSeconds);
+
+            Vec3 approachPoint = Field.LimitToNearestSurface(target - arrivalDirection.Normalize() * lineUp);
+
+            // Tourner vers le point d'approche, puis couvrir la ligne droite finale
+            return Eta(car, approachPoint, lineUp, out _);
+        }
+
+        /// <summary>
+        /// Point d'entrée unique pour la stratégie ET pour les actions : passe par le moteur
+        /// étalonné ou par l'ancien <see cref="Drive.GetEta"/> selon
+        /// <see cref="Fixes.MovementEngine"/>, pour pouvoir comparer les deux sur un même scénario
+        /// sans toucher aux appelants.
         /// </summary>
         public static float EtaFor(Car car, Vec3 target)
             => Fixes.MovementEngine ? Eta(car, target) : Drive.GetEta(car, target);
 
-        /// <summary>Idem, en exposant le détail par phase (banc d'étalonnage).</summary>
-        public static float Eta(Car car, Vec3 target, out EtaBreakdown b)
+        /// <summary>Idem, avec contrainte de direction à l'arrivée (utilisé par les tirs).</summary>
+        public static float EtaFor(Car car, Vec3 target, Vec3 arrivalDirection)
+            => Fixes.MovementEngine
+                ? Eta(car, target, arrivalDirection)
+                : Drive.GetEta(car, target, arrivalDirection);
+
+        /// <param name="extraStraightDistance">Terrain supplémentaire couvert en ligne droite en fin de trajet.</param>
+        private static float Eta(Car car, Vec3 target, float extraStraightDistance, out EtaBreakdown b)
         {
             b = default;
 
@@ -128,6 +181,8 @@ namespace Bot
                 distance += speed * speed / (2f * Car.BrakeAccel);
                 speed = 0f;
             }
+
+            distance += extraStraightDistance;
 
             b.Distance = distance;
             b.Drive = Drive.TimeToCoverDistance(speed, car.Boost, distance);

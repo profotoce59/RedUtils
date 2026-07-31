@@ -59,7 +59,7 @@ namespace RedUtils
                         // Approche : drive vers intercept
                         if (_driveOrDodge == null || (_driveOrDodge is Drive && _driveOrDodge.Interruptible))
                         {
-                            BallSlice intercept = Ball.Prediction.Find(s => Drive.GetEta(bot.Me, s.Location) <= s.Time - Game.Time);
+                            BallSlice intercept = Ball.Prediction.Find(s => Movement.EtaFor(bot.Me, s.Location) <= s.Time - Game.Time);
                             Vec3 target = intercept?.Location ?? Ball.Location;
                             _driveOrDodge = new Drive(bot.Me, target, allowDodges: false);
                         }

@@ -13,7 +13,11 @@ namespace Bot
 #else
         private const bool DebugMode = false;
 #endif
-        private const bool AccuratePhysics = false;
+        /// <summary>
+        /// Moteur d'évaluation des tirs. Piloté par <see cref="Fixes.RocketSimShotCheck"/> —
+        /// l'ancienne constante <c>AccuratePhysics</c> imposait de recompiler pour changer.
+        /// </summary>
+        private ShotCheck CurrentShotCheck => Fixes.RocketSimShotCheck ? AccurateShotCheck : DefaultShotCheck;
 
         private GameStateMode _lastState;
         private FieldZone _lastZone;
@@ -458,7 +462,7 @@ namespace Bot
             FieldZone fieldZone = Rotation.ComputeFieldZone(OurGoal);
 
             // Toutes les 0.5s : interrompre GetBoost si on est Attacker et que la balle est plus proche que le pad
-            if (Action is GetBoost runningBoost && role != Role.Support
+            if (Action is GetBoost runningBoost && runningBoost.Found && role != Role.Support
                 && Game.Time - _lastBoostCheckTime >= BoostCheckInterval)
             {
                 _lastBoostCheckTime = Game.Time;
@@ -504,18 +508,29 @@ namespace Bot
                     foreach (Boost b in Field.Boosts)
                         if (b.IsLarge && b.Location.y * OurGoal.Location.y > 0)
                             ourBoosts.Add(b);
-                    SetAction(ourBoosts.Count > 0
+
+                    // GetBoost.Found est faux quand aucun pad candidat n'est utilisable (tous en
+                    // cooldown au-delà de notre ETA). On retombe alors sur l'ensemble des gros pads,
+                    // puis sur le kickoff — plutôt que d'assigner une action inerte (AUDIT §0.1).
+                    GetBoost kickoffBoost = ourBoosts.Count > 0
                         ? new GetBoost(Me, ourBoosts, interruptible: false)
-                        : new GetBoost(Me, interruptible: false), "GetBoost(kickoff)");
+                        : new GetBoost(Me, interruptible: false);
+                    if (!kickoffBoost.Found && ourBoosts.Count > 0)
+                        kickoffBoost = new GetBoost(Me, interruptible: false);
+
+                    if (kickoffBoost.Found)
+                        SetAction(kickoffBoost, "GetBoost(kickoff)");
+                    else
+                        SetAction(new Kickoff(), "Kickoff");
                 }
             }
             else if (Action == null || Action.Interruptible)
             {
-                ShotCheck defenseShotCheck = AccuratePhysics ? AccurateShotCheck : DefaultShotCheck;
+                ShotCheck shotCheck = CurrentShotCheck;
 
                 // Priorités défensives (Fixes.DefensiveOverhaul) :
                 // save sur tir cadré (tous rôles), dégagement + discipline goal-side (Attacker)
-                if (TryDefensivePriority(defenseShotCheck, gameState, fieldZone, role))
+                if (TryDefensivePriority(shotCheck, gameState, fieldZone, role))
                     return;
 
                 if (role == Role.Support)
@@ -549,8 +564,15 @@ namespace Bot
                                 safeBoosts.Add(b);
                         if (safeBoosts.Count > 0)
                         {
-                            SetAction(new GetBoost(Me, safeBoosts), "GetBoost");
-                            return;
+                            // Found est faux si tous les pads goal-side sont en cooldown au-delà de
+                            // notre ETA : on ne pose alors PAS l'action (elle serait inerte) et on
+                            // enchaîne sur le replacement (AUDIT §0.1).
+                            GetBoost collect = new GetBoost(Me, safeBoosts);
+                            if (collect.Found)
+                            {
+                                SetAction(collect, "GetBoost");
+                                return;
+                            }
                         }
                         // Aucun pad sûr : on se replace quand même, tant pis pour le boost
                     }
@@ -560,8 +582,6 @@ namespace Bot
                     SetArrive(backup, backup.FlatDirection(Ball.Location), "Arrive→BackupPos");
                     return;
                 }
-
-                ShotCheck shotCheck = AccuratePhysics ? AccurateShotCheck : DefaultShotCheck;
 
                 switch (gameState)
                 {
@@ -698,7 +718,7 @@ namespace Bot
                                     {
                                         Vec3 offset = ballToGoal * 300f;
                                         BallSlice contourSlice = Ball.Prediction.Find(s =>
-                                            Drive.GetEta(Me, s.Location + offset) <= s.Time - Game.Time);
+                                            Movement.EtaFor(Me, s.Location + offset) <= s.Time - Game.Time);
                                         Vec3 contourTarget = contourSlice != null
                                             ? contourSlice.Location + offset
                                             : Ball.Location + offset;
@@ -1040,7 +1060,8 @@ namespace Bot
                 Drive d    => d.Target,
                 Arrive a   => a.Target,
                 Shot s     => s.TargetLocation,
-                GetBoost g => g.ChosenBoost.Location,
+                // Found peut être faux : GetBoost n'a alors ni pad ni cible (AUDIT §0.1)
+                GetBoost g => g.Found ? (Vec3?)g.ChosenBoost.Location : null,
                 _          => null,
             };
 
@@ -1187,7 +1208,7 @@ namespace Bot
             float timeRemaining = shot.Slice.Time - Game.Time;
             // Même ETA que celui utilisé par IsValid (alignement compris), sinon la marge affichée
             // est calculée sur un trajet que le bot ne conduira pas et ne veut rien dire.
-            float carEta = Drive.GetEta(Me, shot.TargetLocation, shot.ShotDirection.FlatNorm());
+            float carEta = Movement.EtaFor(Me, shot.TargetLocation, shot.ShotDirection.FlatNorm());
             // Vitesse à laquelle Arrive va se caler pour arriver pile à l'heure (Arrive.cs:59).
             // C'est elle qui décide si le bot boost ou se laisse rouler : sous 1400, aucun boost.
             float paceSpeed = Drive.GetDistance(Me, shot.TargetLocation) / MathF.Max(timeRemaining, 0.001f);

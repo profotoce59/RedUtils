@@ -1,3 +1,6 @@
+# Git
+Il est interdit de commit ou push quoi que ce soit sur git, la seul chose que tu puisse faire c'est utiliser l'historique pour voir d'ancienne version que j'aurais pu pousser si je te demande de revenir en arrière
+
 # HardcodeBot — Référence projet
 
 Bot Rocket League **hardcodé** (décisions déterministes, pas de ML), basé sur la librairie RedUtils en C#. Le bridge Python connecte le bot au framework RLBot via socket.

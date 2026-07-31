@@ -291,7 +291,7 @@ namespace RedUtils
 
 			// The ETA accounts for ShotDirection: we don't just need to reach the point, we need to be
 			// travelling the right way when we do, which costs extra ground to line up.
-			return Drive.GetEta(car, TargetLocation, ShotDirection.FlatNorm(surface.Normal)) < timeRemaining - jumpTime + JumpMargin
+			return Movement.EtaFor(car, TargetLocation, ShotDirection.FlatNorm(surface.Normal)) < timeRemaining - jumpTime + JumpMargin
 				&& height < 270;
 		}
 

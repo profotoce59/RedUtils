@@ -115,7 +115,7 @@ namespace RedUtils
 		/// <summary>Estimates the time left before we arrive, assuming we drive as fast as possible</summary>
 		public float Eta(Car car)
 		{
-			return Drive.GetEta(car, Target);
+			return Movement.EtaFor(car, Target);
 		}
 	}
 }

@@ -142,7 +142,7 @@ namespace RedUtils
 			// Returns true if we can get there in time, and the ball isn't too high to reach from the ground.
 			// The ETA accounts for ShotDirection: we don't just need to reach the point, we need to be
 			// travelling the right way when we do, which costs extra ground to line up.
-			return Drive.GetEta(car, TargetLocation, ShotDirection.FlatNorm(surface.Normal)) < timeRemaining
+			return Movement.EtaFor(car, TargetLocation, ShotDirection.FlatNorm(surface.Normal)) < timeRemaining
 				&& height < 20.5f && ShotDirection.z < 0.9f;
 		}
 	}

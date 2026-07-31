@@ -158,7 +158,7 @@ namespace RedUtils
                 if (t <= 0f) continue;
                 Vec3 contact = GoalSideContact(s.Location);
                 if (!InFrontOfGoal(contact)) continue;
-                if (Drive.GetEta(bot.Me, contact) <= t)
+                if (Movement.EtaFor(bot.Me, contact) <= t)
                     return contact;
             }
             return null;

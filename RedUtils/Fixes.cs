@@ -41,20 +41,32 @@ namespace RedUtils
 		/// couverte par abortInvalid/ShotValid. Passe à true pour comparer avec l'ancien comportement.</para></summary>
 		public static bool JumpAbortWhenEarly = false;
 
-		/// <summary>Feature — Moteur de déplacement (Bot/Movement.cs) au lieu de Drive.GetEta.
+		/// <summary>Feature — Moteur de déplacement (RedUtils/Movement.cs) au lieu de Drive.GetEta.
 		/// <para>Movement.Eta étalonne sur mesures ce que Drive.GetEta estimait mal : coût réel du
 		/// virage, surcoût du flip, et freinage quand la voiture s'éloigne de sa cible (le plus gros
 		/// écart mesuré, +34 %). Voir ETA_MESURES.md.</para>
-		/// <para>Mettre à false pour retrouver Drive.GetEta et comparer les deux sur les mêmes
-		/// courses du banc.</para></summary>
+		/// <para><b>Portée (AUDIT §1.1)</b> : ce flag pilote désormais TOUS les appelants d'ETA du
+		/// projet, décision comme exécution — <c>Rotation</c> (possession, rôles),
+		/// <c>Shot.IsValid</c> des quatre mécaniques, <c>Fifty</c>, <c>Save</c>, <c>GetBoost</c>,
+		/// <c>Arrive</c>, et les cibles de <c>MyBot</c>. Auparavant seule la stratégie passait par
+		/// Movement, les actions restant sur Drive.GetEta : un tir jugé jouable par la stratégie
+		/// pouvait être refusé par IsValid. Tout passe maintenant par
+		/// <c>Movement.EtaFor</c>.</para>
+		/// <para>Mettre à false pour retrouver Drive.GetEta PARTOUT et comparer les deux moteurs sur
+		/// les mêmes courses du banc.</para></summary>
 		public static bool MovementEngine = true;
 
-		/// <summary>Feature — Latch de la cible de save (MyBot, branche TryDefensivePriority).
-		/// <para>Garde la dernière interception connue quand FindInterceptSlice rate un tick, au lieu
-		/// de sauter au repli près-but. Corrige l'oscillation de la voiture, mais MASQUE la cause
-		/// racine (un tick sur deux raté).</para>
-		/// <para>EN PAUSE (false) pour diagnostiquer le comportement brut via les logs [SAVEMISS].</para></summary>
-		public static bool SaveTargetLatch = false;
+		/// <summary>Feature — Moteur de collision pour l'évaluation des tirs.
+		/// <para><b>false</b> (défaut) = <c>DefaultShotCheck</c> : la vitesse de la balle après
+		/// impact est estimée par la formule historique de RedUtils
+		/// (<c>(vitesseVoiture * 6 + vitesseBalle) / 7</c>).</para>
+		/// <para><b>true</b> = <c>AccurateShotCheck</c> : impulsion reprise de RocketSim
+		/// (<c>Ball::_OnHit</c>) — direction de contact aplatie en Z, composante avant réduite,
+		/// courbe d'impulsion par paliers. Plus juste sur les tirs d'angle, où la formule historique
+		/// surestime la déviation.</para>
+		/// <para>Remplace l'ancienne constante <c>MyBot.AccuratePhysics</c>, qui imposait une
+		/// recompilation pour changer de moteur. Voir Tools.cs.</para></summary>
+		public static bool RocketSimShotCheck = false;
 
 		/// <summary>DEBUG — Banc d'étalonnage de l'ETA à vitesse maximale.
 		/// <para>Quand ce flag est vrai, le bot ABANDONNE toute stratégie : il roule à fond (boost

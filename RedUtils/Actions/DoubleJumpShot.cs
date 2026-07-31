@@ -212,7 +212,7 @@ namespace RedUtils
 			// single test subsumes the old `timeRemaining > jumpTime`.
 			// The ETA accounts for ShotDirection: we need to be travelling the right way on arrival.
 			float jumpTime = Utils.TimeToJump(Vec3.Up, TargetLocation.z, true);
-			return Drive.GetEta(car, TargetLocation.Flatten(), ShotDirection.FlatNorm()) < timeRemaining - jumpTime + JumpMargin
+			return Movement.EtaFor(car, TargetLocation.Flatten(), ShotDirection.FlatNorm()) < timeRemaining - jumpTime + JumpMargin
 				&& TargetLocation.z >= 270 && TargetLocation.z < 510;
 		}
 	}

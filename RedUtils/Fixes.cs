@@ -102,6 +102,25 @@ namespace RedUtils
 		/// traiter séparément.</para></summary>
 		public static bool RetreatBoost = true;
 
+		/// <summary>Feature — Vrai poste de dernier homme (AUDIT §2.5). Bascule DEUX changements
+		/// solidaires : le point visé, et la façon de l'occuper.
+		/// <para><b>Sans le flag</b> : <c>DefensivePosition</c> = 20 % du chemin centre du but →
+		/// balle, rejoint par un <c>Arrive</c>. Deux défauts. Le point ignore le côté, donc le
+		/// dernier homme se place sur la trajectoire de la balle — du même côté que l'attaquant.
+		/// Et <c>Arrive</c> roule à pleine vitesse jusqu'au bout (aucun <c>arrivalTime</c>, donc
+		/// vitesse cible = MaxSpeed) : la voiture déborde et doit faire demi-tour. Elle recule en
+		/// prime sa cible pour s'aligner sur la direction d'arrivée, ce qui, si près de la ligne,
+		/// la place DANS le but.</para>
+		/// <para><b>Avec le flag</b> : le poste est ancré au <b>deuxième poteau</b> (latéral en
+		/// rampe, à l'opposé de la balle) avec une profondeur qui suit la distance balle→ligne,
+		/// bornée à 1100 uu — balle dans un corner, on est au deuxième poteau sur la ligne. Il est
+		/// occupé par la nouvelle action <see cref="Cover"/> : approche à vitesse plafonnée par la
+		/// distance de freinage, puis arrêt sur place nez pointé vers la balle, avec pivot au frein
+		/// à main si le cap est mauvais.</para>
+		/// <para>Réglages : <c>Rotation.CoverAdvanceFraction / CoverMaxAdvance / CoverPostX /
+		/// CoverPostRamp</c>, et les constantes de <c>Cover.cs</c>.</para></summary>
+		public static bool GoalieCover = true;
+
 		/// <summary>DEBUG — Banc d'étalonnage de l'ETA à vitesse maximale.
 		/// <para>Quand ce flag est vrai, le bot ABANDONNE toute stratégie : il roule à fond (boost
 		/// autorisé) vers la position de la balle, et imprime l'ETA prédit puis le temps réellement

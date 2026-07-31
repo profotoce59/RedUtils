@@ -243,13 +243,62 @@ namespace Bot
             return best;
         }
 
+        // --- Poste du dernier homme (AUDIT §2.5) ---
+
+        // Profondeur : fraction de la distance balle→ligne dont on sort du but.
+        private const float CoverAdvanceFraction = 0.2f;
+        // ... bornée : au-delà on n'est plus un dernier homme mais un deuxième attaquant.
+        private const float CoverMaxAdvance = 1100f;
+        // On ne se colle jamais à la ligne : un contact sur la ligne pousse la balle dedans.
+        private const float CoverLineOffset = 120f;
+        // Position latérale du poste, mesurée depuis l'axe. Un peu en retrait du poteau (890)
+        // pour couvrir l'intérieur plutôt que le montant lui-même.
+        private const float CoverPostX = 640f;
+        // Largeur de la rampe latérale autour de x = 0 (même raison que BackupPosition).
+        private const float CoverPostRamp = 1500f;
+
         /// <summary>
-        /// Defensive fallback position: 20% of the way from our goal toward the ball.
-        /// Stays close to goal to shadow incoming shots.
+        /// Poste du dernier homme : sur le <b>deuxième poteau</b>, à une profondeur qui suit la
+        /// distance de la balle au but.
+        ///
+        /// <para><b>Ce que remplaçait ce calcul.</b> L'ancienne version interpolait à 20 % entre le
+        /// CENTRE du but et la balle. Deux défauts : elle ne tenait aucun compte du côté (le dernier
+        /// homme se plaçait sur la trajectoire de la balle, donc du même côté que l'attaquant), et
+        /// elle sortait du but proportionnellement à la distance de la balle sans borne — balle au
+        /// rond central, le « gardien » était à 1000 uu de sa ligne.</para>
+        ///
+        /// <para><b>Pourquoi pas un simple lerp poteau→balle à 20 %.</b> Sur une balle dans notre
+        /// corner, la ligne poteau opposé→balle est presque entièrement latérale : 20 % de ce
+        /// trajet ramène au centre de la cage (x ≈ 0), pas au deuxième poteau. Les deux axes
+        /// répondent à des questions différentes et sont donc calculés séparément :</para>
+        /// <list type="bullet">
+        /// <item><b>Latéral</b> — côté opposé à la balle, en rampe. Balle dans un corner : on est
+        /// au deuxième poteau. Balle dans l'axe : on est dans l'axe.</item>
+        /// <item><b>Profondeur</b> — 20 % de la distance balle→ligne, plafonnée. Balle collée au
+        /// but : on est sur la ligne. Balle loin : on avance un peu, sans jamais quitter la cage.</item>
+        /// </list>
+        ///
+        /// <para>La rampe latérale remplace un <c>Sign()</c> pour la même raison que
+        /// <see cref="BackupPosition"/> : un saut de 1280 uu dès que la balle frôle <c>x = 0</c>
+        /// dépasse le seuil de re-ciblage et recrée l'action en boucle.</para>
         /// </summary>
         public static Vec3 DefensivePosition(Goal ourGoal)
         {
-            return ourGoal.Location + (Ball.Location - ourGoal.Location) * 0.2f;
+            // Comportement d'origine : 20 % du chemin centre du but → balle, sans notion de côté
+            if (!Fixes.GoalieCover)
+                return ourGoal.Location + (Ball.Location - ourGoal.Location) * 0.2f;
+
+            int side = Field.Side(ourGoal.Team);
+
+            // Latéral : deuxième poteau = à l'opposé de la balle
+            float x = -Utils.Cap(Ball.Location.x / CoverPostRamp, -1f, 1f) * CoverPostX;
+
+            // Profondeur : d'autant plus avancé que la balle est loin, mais jamais beaucoup
+            float depthToBall = MathF.Abs(Ball.Location.y - ourGoal.Location.y);
+            float advance = MathF.Min(depthToBall * CoverAdvanceFraction, CoverMaxAdvance);
+            float y = ourGoal.Location.y - side * (advance + CoverLineOffset);
+
+            return new Vec3(x, y, 0f);
         }
 
         /// <summary>

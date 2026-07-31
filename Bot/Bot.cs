@@ -184,6 +184,33 @@ namespace Bot
         }
 
         /// <summary>
+        /// Tient un poste (<see cref="Cover"/>) en réutilisant l'action en cours si possible, et en
+        /// passant par un pad de boost s'il s'en trouve un sur le chemin (§2.4).
+        ///
+        /// <para>Même latch que <see cref="SetDrive"/> : recréer l'action remettrait à zéro le
+        /// <c>timeOnGround</c> de son Drive interne, et surtout son état de tenue — la voiture
+        /// repartirait en approche alors qu'elle est déjà en place.</para>
+        /// </summary>
+        private void SetCover(Vec3 target, string intent)
+        {
+            Boost detour = Rotation.RetreatBoost(Me, target);
+            if (detour != null)
+            {
+                SetDrive(detour.Location, intent + "+Boost");
+                return;
+            }
+
+            if (Action is Cover cover && _intent == intent && cover.Target.Dist(target) < RetargetDistance)
+            {
+                cover.Target = target;
+                cover.FacePoint = Ball.Location;
+                return;
+            }
+
+            SetAction(new Cover(Me, target, Ball.Location), intent);
+        }
+
+        /// <summary>
         /// Vrai si un Shot du même intent est déjà en cours.
         /// Un Shot gère son propre cycle de vie (JumpShot par ex. rafraîchit sa cible toutes les
         /// 0.2s via SetTargetLocation, et s'auto-abandonne — Finished=true — via ses gardes internes
@@ -581,8 +608,12 @@ namespace Bot
                     if (gameState == GameStateMode.NotPossessed
                         && (!Fixes.OffensivePressing || fieldZone == FieldZone.Defensive))
                     {
-                        // Dernier homme : on couvre, mais en ramassant un pad s'il est sur la route
-                        SetArriveVia(Rotation.DefensivePosition(OurGoal), "Arrive→Couverture");
+                        // Dernier homme : on TIENT le poste (arrêt + nez vers la balle) au lieu de
+                        // le traverser à pleine vitesse, en ramassant un pad s'il est sur la route.
+                        if (Fixes.GoalieCover)
+                            SetCover(Rotation.DefensivePosition(OurGoal), "Couverture");
+                        else
+                            SetArriveVia(Rotation.DefensivePosition(OurGoal), "Arrive→Couverture");
                         return;
                     }
 

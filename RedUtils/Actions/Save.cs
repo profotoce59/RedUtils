@@ -36,6 +36,12 @@ namespace RedUtils
         private Vec3 _latchedTarget;
         private bool _hasTarget;
 
+        /// <summary>
+        /// Instant de jeu du contact visé, latché au passage en phase de frappe. -1 pendant
+        /// l'approche. Voir <see cref="ContactPoint"/> — AUDIT §1.6.
+        /// </summary>
+        private float _contactTime = -1f;
+
         /// <summary>Décalage goal-side du contact : rayon balle + demi-longueur voiture.</summary>
         private const float GoalSideOffset = Ball.Radius + 60f;
         /// <summary>Marge devant la ligne de but : au-delà, la voiture serait dans le filet.</summary>
@@ -62,8 +68,12 @@ namespace RedUtils
 
                     if (ballEta < StrikeEta)
                     {
+                        // Latch de l'instant du contact : la frappe vise ce point-là, pas la balle
+                        // telle qu'elle est maintenant (AUDIT §1.6)
+                        _contactTime = near.Time;
+
                         // Frappe selon la hauteur (même logique que Fifty)
-                        if (Ball.Location.z < 250f)
+                        if (ContactPoint().z < 250f)
                         {
                             _dodge = new Dodge(bot.Me.Location.FlatDirection(_clearAim));
                             _state = State.Dodge;
@@ -101,12 +111,15 @@ namespace RedUtils
                 case State.Jump:
                     Interruptible = false;
                     _jumpTimer += bot.DeltaTime;
-                    bot.AimAt(Ball.Location);
+                    // Viser le point de contact prédit, pas la balle actuelle (AUDIT §1.6).
+                    // La DIRECTION du dodge, elle, reste _clearAim : c'est ce qui fait de cette
+                    // action un dégagement dirigé plutôt qu'un simple challenge.
+                    bot.AimAt(ContactPoint());
                     bot.Controller.Jump = _jumpTimer < 0.15f;
 
                     if (_jumpTimer >= 0.15f && !bot.Me.IsGrounded)
                     {
-                        if (Ball.Location.z >= 400f)
+                        if (ContactPoint().z >= 400f)
                             _state = State.Aerial;
                         else
                         {
@@ -123,11 +136,11 @@ namespace RedUtils
 
                 case State.Aerial:
                     Interruptible = false;
-                    bot.AimAt(Ball.Location);
+                    bot.AimAt(ContactPoint());
                     bot.Controller.Boost = true;
                     bot.Controller.Jump = false;
 
-                    if (bot.Me.Location.Dist(Ball.Location) < 300f || bot.Me.HasDoubleJumped)
+                    if (bot.Me.Location.Dist(ContactPoint()) < 300f || bot.Me.HasDoubleJumped)
                     {
                         _dodge = new Dodge(bot.Me.Location.FlatDirection(_clearAim));
                         _state = State.Dodge;
@@ -158,10 +171,23 @@ namespace RedUtils
                 if (t <= 0f) continue;
                 Vec3 contact = GoalSideContact(s.Location);
                 if (!InFrontOfGoal(contact)) continue;
-                if (Movement.EtaFor(bot.Me, contact) <= t)
+                if (Drive.GetEta(bot.Me, contact) <= t)
                     return contact;
             }
             return null;
+        }
+
+        /// <summary>
+        /// Position visée pendant la frappe : la balle à l'instant du contact latché, rafraîchie
+        /// depuis la prédiction à chaque tick (elle se corrige donc si la trajectoire change).
+        /// Retombe sur <c>Ball.Location</c> tant qu'aucun contact n'est latché (AUDIT §1.6).
+        /// </summary>
+        private Vec3 ContactPoint()
+        {
+            if (_contactTime < 0f)
+                return Ball.Location;
+            BallSlice slice = Ball.Prediction.AtTime(_contactTime);
+            return slice?.Location ?? Ball.Location;
         }
 
         /// <summary>Point où la voiture bloque : goal-side de la balle (entre elle et notre but).</summary>

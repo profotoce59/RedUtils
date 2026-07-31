@@ -148,6 +148,33 @@ namespace Bot
         }
 
         /// <summary>
+        /// Se replace sur <paramref name="destination"/> en passant par un pad de boost s'il s'en
+        /// trouve un quasiment sur le chemin (AUDIT §2.4). Un repli est un trajet qu'on fait de
+        /// toute façon : le boost ramassé dessus ne coûte que le détour.
+        ///
+        /// <para>Le trajet vers le pad utilise <c>Drive</c> et non <c>Arrive</c> : Arrive décale sa
+        /// cible en arrière pour s'aligner sur une direction d'arrivée (Arrive.cs:82), ce qui ferait
+        /// passer À CÔTÉ du pad. On veut le traverser, pas s'y présenter proprement.</para>
+        ///
+        /// <para>Le changement d'intent au moment du ramassage est voulu : c'est un vrai changement
+        /// de phase, pas le clignotement que <c>SetDrive</c>/<c>SetArrive</c> cherchent à éviter.
+        /// <c>RetreatBoost</c> est stable pendant l'approche (le détour tend vers 0 à mesure qu'on
+        /// s'en rapproche) et le pad sort du calcul dès qu'il est pris, le boost passant au-dessus
+        /// du plafond de recherche.</para>
+        /// </summary>
+        private void SetArriveVia(Vec3 destination, string intent)
+        {
+            Boost detour = Rotation.RetreatBoost(Me, destination);
+            if (detour != null)
+            {
+                SetDrive(detour.Location, intent + "+Boost");
+                return;
+            }
+
+            SetArrive(destination, destination.FlatDirection(Ball.Location), intent);
+        }
+
+        /// <summary>
         /// Vrai si un Shot du même intent est déjà en cours.
         /// Un Shot gère son propre cycle de vie (JumpShot par ex. rafraîchit sa cible toutes les
         /// 0.2s via SetTargetLocation, et s'auto-abandonne — Finished=true — via ses gardes internes
@@ -545,8 +572,8 @@ namespace Bot
                     if (gameState == GameStateMode.NotPossessed
                         && (!Fixes.OffensivePressing || fieldZone == FieldZone.Defensive))
                     {
-                        Vec3 cover = Rotation.DefensivePosition(OurGoal);
-                        SetArrive(cover, cover.FlatDirection(Ball.Location), "Arrive→Couverture");
+                        // Dernier homme : on couvre, mais en ramassant un pad s'il est sur la route
+                        SetArriveVia(Rotation.DefensivePosition(OurGoal), "Arrive→Couverture");
                         return;
                     }
 
@@ -578,8 +605,7 @@ namespace Bot
                     }
 
                     // Position de soutien basée sur la balle (goal-side + back post), face au jeu
-                    Vec3 backup = Rotation.BackupPosition(OurGoal);
-                    SetArrive(backup, backup.FlatDirection(Ball.Location), "Arrive→BackupPos");
+                    SetArriveVia(Rotation.BackupPosition(OurGoal), "Arrive→BackupPos");
                     return;
                 }
 
@@ -661,13 +687,17 @@ namespace Bot
                             if (ShotInProgress("Shot→LeurBut"))
                                 break;
 
-                            Shot offensiveShot = FindShot(shotCheck, new Target(TheirGoal));
+                            // On a la balle et du temps : Patient refuse les slices mal alignées
+                            // tant que l'angle s'améliore, pour ne pas tirer du côté (AUDIT §2.2).
+                            Shot offensiveShot = FindShot(Patient(shotCheck), new Target(TheirGoal));
                             if (offensiveShot != null)
                             {
                                 LogShotPick("Shot→LeurBut", offensiveShot);
                                 SetAction(offensiveShot, "Shot→LeurBut");
                             }
                             else
+                                // Aucun tir bien orienté pour l'instant : on continue d'avancer sur la
+                                // balle, le tir se déclenchera dès que l'alignement sera bon.
                                 SetDrive(Ball.Location, "Drive→Balle", allowDodges: false, wasteBoost: true);
                         }
                         else
@@ -718,7 +748,7 @@ namespace Bot
                                     {
                                         Vec3 offset = ballToGoal * 300f;
                                         BallSlice contourSlice = Ball.Prediction.Find(s =>
-                                            Movement.EtaFor(Me, s.Location + offset) <= s.Time - Game.Time);
+                                            Drive.GetEta(Me, s.Location + offset) <= s.Time - Game.Time);
                                         Vec3 contourTarget = contourSlice != null
                                             ? contourSlice.Location + offset
                                             : Ball.Location + offset;
@@ -849,6 +879,76 @@ namespace Bot
             // Goal-side, pas de tir jouable : la logique standard (Fifty / Drive) prend le relais —
             // depuis goal-side, la poussée voiture→balle part vers le camp adverse, c'est sain.
             return false;
+        }
+
+        // --- Patience de tir (Fixes.PatientShot, AUDIT §2.2) ---
+
+        /// <summary>Au-delà de cet écart latéral, la balle part vers le corner : plus la peine d'attendre l'alignement.</summary>
+        private const float PatienceMaxX = 3000f;
+        /// <summary>Vitesse latérale minimale vers l'axe pour croire à une amélioration de l'angle.</summary>
+        private const float PatienceClosingSpeed = 100f;
+
+        /// <summary>
+        /// Enveloppe un ShotCheck en REFUSANT les slices mal alignées avec le but quand la balle
+        /// est en train de revenir vers l'axe.
+        ///
+        /// <para>Problème corrigé : <c>Ball.Prediction.Find</c> renvoie la PREMIÈRE slice jouable,
+        /// donc le bot tire systématiquement le plus tôt possible — quel que soit l'angle. Une
+        /// balle qui traverse depuis le corner est frappée pendant qu'elle est encore de côté,
+        /// alors qu'attendre trois dixièmes de seconde la place face au but.</para>
+        ///
+        /// <para>Critère d'alignement : l'écart latéral au-delà du poteau
+        /// (<c>|x| − demi-largeur du but</c>) comparé à la distance restante jusqu'à la ligne. Tant
+        /// que l'écart dépasse cette distance, le tir part de trop loin sur le côté — c'est
+        /// grossièrement un angle de plus de 45° par rapport à la cage.</para>
+        ///
+        /// <para>On n'attend QUE si la situation s'améliore d'elle-même (<c>vx</c> dirigée vers
+        /// l'axe) et que la balle n'est pas déjà partie dans le corner. Sinon on tire : refuser un
+        /// tir sans perspective de mieux, c'est ne jamais tirer. Comme <c>Find</c> balaie dans
+        /// l'ordre chronologique, refuser les slices précoces suffit à faire choisir la première
+        /// slice correctement alignée — aucun second balayage n'est nécessaire.</para>
+        ///
+        /// <para>Réservé à <c>Possessed</c> en zone offensive : c'est le seul état où l'on a
+        /// réellement le temps d'attendre. En <c>Contested</c> l'adversaire arrive, et sur un
+        /// dégagement ou une save la question ne se pose pas.</para>
+        ///
+        /// <para><b>Limite connue, à surveiller en test.</b> Quand toutes les slices sont refusées,
+        /// <c>FindShot</c> renvoie null et on retombe sur <c>Drive→Balle</c> — qui roule VERS la
+        /// balle. Un contact peut donc survenir quand même, à l'angle qu'on voulait éviter. La
+        /// version aboutie irait se placer derrière la balle par rapport à leur but au lieu de la
+        /// suivre. Si le bot chippe la balle de côté pendant les phases d'attente, c'est ça.</para>
+        /// </summary>
+        private ShotCheck Patient(ShotCheck inner)
+        {
+            if (!Fixes.PatientShot)
+                return inner;
+
+            return (slice, target) =>
+            {
+                if (slice != null && WorthWaitingForAlignment(slice))
+                    return null;
+                return inner(slice, target);
+            };
+        }
+
+        /// <summary>Vrai si cette slice est mal alignée avec leur but ET que l'angle s'améliore.</summary>
+        private bool WorthWaitingForAlignment(BallSlice slice)
+        {
+            float lateral = MathF.Abs(slice.Location.x);
+
+            // Déjà dans le corner : l'angle ne reviendra pas, inutile de patienter
+            if (lateral > PatienceMaxX)
+                return false;
+
+            // De combien on dépasse le poteau, contre ce qu'il reste à parcourir jusqu'à la ligne
+            float pastPost = lateral - Goal.Width / 2f + Ball.Radius;
+            float depthToGoal = MathF.Abs(slice.Location.y - TheirGoal.Location.y);
+            if (pastPost <= depthToGoal)
+                return false; // angle déjà correct
+
+            // La balle revient-elle vers l'axe ? Sinon attendre ne sert à rien.
+            float closing = -slice.Velocity.x * MathF.Sign(slice.Location.x);
+            return closing > PatienceClosingSpeed;
         }
 
         /// <summary>
@@ -1208,7 +1308,7 @@ namespace Bot
             float timeRemaining = shot.Slice.Time - Game.Time;
             // Même ETA que celui utilisé par IsValid (alignement compris), sinon la marge affichée
             // est calculée sur un trajet que le bot ne conduira pas et ne veut rien dire.
-            float carEta = Movement.EtaFor(Me, shot.TargetLocation, shot.ShotDirection.FlatNorm());
+            float carEta = Drive.GetEta(Me, shot.TargetLocation, shot.ShotDirection.FlatNorm());
             // Vitesse à laquelle Arrive va se caler pour arriver pile à l'heure (Arrive.cs:59).
             // C'est elle qui décide si le bot boost ou se laisse rouler : sous 1400, aucun boost.
             float paceSpeed = Drive.GetDistance(Me, shot.TargetLocation) / MathF.Max(timeRemaining, 0.001f);

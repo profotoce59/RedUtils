@@ -61,7 +61,8 @@ namespace RedUtils
 			_jumpImmediatly = car.Velocity.FlatAngle(car.Location.Direction(TargetLocation), car.Up) < 0.6f || car.Velocity.FlatLen(car.Up) < 500 || !car.IsGrounded;
 
 			// Sets up the drive location and action
-			DriveLocation = Movement.EtaFor(car, TargetLocation.Flatten()) <= Movement.EtaFor(car, TargetLocation) ? TargetLocation.Flatten() : TargetLocation;
+			// Drive.GetEta et non Movement : voir « domaine de validité » en tête de Movement.cs.
+			DriveLocation = Drive.GetEta(car, TargetLocation.Flatten(), false) <= Drive.GetEta(car, TargetLocation, false) ? TargetLocation.Flatten() : TargetLocation;
 			DriveAction = new Drive(car, DriveLocation, Drive.GetDistance(car, DriveLocation) / (Slice.Time - Game.Time));
 		}
 

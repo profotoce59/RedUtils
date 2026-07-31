@@ -80,7 +80,7 @@ namespace RedUtils
 			foreach (Boost boost in boosts)
 			{
 				// Calculates how long it will take to get the boost
-				float eta = Movement.EtaFor(car, boost.Location);
+				float eta = Drive.GetEta(car, boost.Location);
 				// If we can get there fastest, and it will be active when we get there, we choose it as our new fastest!
 				if (eta < fastestEta && (boost.IsActive || boost.TimeUntilActive < eta))
 				{
@@ -126,7 +126,7 @@ namespace RedUtils
 
 			// Gets info on the chosen boost
 			ChosenBoost = Field.Boosts[BoostIndex];
-			Eta = Movement.EtaFor(bot.Me, ChosenBoost.Location);
+			Eta = Drive.GetEta(bot.Me, ChosenBoost.Location);
 
 			// This action can only be interrupted if it was initially set as interruptuble, and if its sub action is also interruptible
 			Interruptible = _initiallyInterruptible && DriveAction.Interruptible;

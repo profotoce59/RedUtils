@@ -70,6 +70,25 @@ namespace RedUtils
             return null;
         }
         
+        /// <summary>
+        /// Première slice à partir de <paramref name="time"/> (temps de jeu absolu), ou null si
+        /// la prédiction ne va pas jusque-là.
+        ///
+        /// <para>Sert à viser un point de CONTACT plutôt que la balle telle qu'elle est
+        /// maintenant (AUDIT §1.6). Balayage linéaire : contrairement à <see cref="Find"/> on ne
+        /// cherche pas le premier point satisfaisant un prédicat mais un instant précis, et la
+        /// grille au pas de 6 le manquerait de jusqu'à 0.1 s.</para>
+        /// </summary>
+        public BallSlice AtTime(float time)
+        {
+            for (int i = 0; i < Length; i++)
+            {
+                if (Slices[i].Time >= time)
+                    return Slices[i];
+            }
+            return null;
+        }
+
         /// <summary>Finds the first ball slice that is scoring in favor of the parameter team </summary>
         public BallSlice FindGoal(int team)
         {

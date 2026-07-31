@@ -157,6 +157,77 @@ namespace Bot
                 && Ball.Velocity.Length() > LooseBallSpeed;
         }
 
+        // --- Boost sur le trajet de repli (Fixes.RetreatBoost, AUDIT §2.4) ---
+
+        // Détour maximal toléré : allongement du trajet (aller au pad puis à la destination,
+        // contre y aller directement). Au-delà, ramasser le boost coûte plus que la position perdue.
+        private const float MaxDetour = 900f;
+        // Un petit pad doit être d'autant plus commode qu'il rapporte moins : son détour est
+        // compté ce facteur de fois. Évite de courir après 12 de boost.
+        private const float SmallPadPenalty = 2.5f;
+        // Un pad de l'autre côté du terrain n'est jamais « sur le chemin », sauf s'il est
+        // pratiquement dans l'axe.
+        private const float SameSideTolerance = 500f;
+        // Au-delà de ce niveau, un détour ne se justifie plus.
+        private const float BoostSeekCeiling = 80f;
+
+        /// <summary>
+        /// Pad de boost à ramasser EN CHEMIN vers <paramref name="destination"/>, ou null.
+        ///
+        /// <para>Un repli est un trajet qu'on fait de toute façon : le boost récupéré dessus est
+        /// presque gratuit. La contrainte n'est donc pas « quel est le pad le plus proche » mais
+        /// « quel pad allonge le moins le trajet ». Trois filtres :</para>
+        /// <list type="number">
+        /// <item>le pad doit être plus près de la destination que nous — sinon on recule ;</item>
+        /// <item>même côté du terrain, pour ne pas traverser ;</item>
+        /// <item>détour borné par <see cref="MaxDetour"/> — un dernier homme qui part chercher du
+        /// boost à l'opposé n'est plus un dernier homme.</item>
+        /// </list>
+        /// <para>Le score est le détour lui-même (pénalisé pour les petits pads), pas la distance
+        /// au pad : c'est le détour qui se paie en position.</para>
+        /// </summary>
+        public static Boost RetreatBoost(Car me, Vec3 destination)
+        {
+            if (!Fixes.RetreatBoost || me.Boost >= BoostSeekCeiling)
+                return null;
+
+            float directDistance = me.Location.Dist(destination);
+            Boost best = null;
+            float bestScore = float.MaxValue;
+
+            foreach (Boost pad in Field.Boosts)
+            {
+                float toPad = me.Location.Dist(pad.Location);
+
+                // Sera-t-il rechargé quand on y arrivera ?
+                if (!pad.IsActive && pad.TimeUntilActive > Movement.EtaFor(me, pad.Location))
+                    continue;
+
+                // 1) Sur le chemin : plus près de la destination que nous ne le sommes
+                if (pad.Location.Dist(destination) >= directDistance)
+                    continue;
+
+                // 2) Même côté du terrain (ou quasiment dans l'axe)
+                if (MathF.Abs(pad.Location.x) > SameSideTolerance
+                    && MathF.Sign(pad.Location.x) != MathF.Sign(me.Location.x))
+                    continue;
+
+                // 3) Détour borné
+                float detour = toPad + pad.Location.Dist(destination) - directDistance;
+                if (detour > MaxDetour)
+                    continue;
+
+                float score = detour * (pad.IsLarge ? 1f : SmallPadPenalty);
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    best = pad;
+                }
+            }
+
+            return best;
+        }
+
         /// <summary>
         /// Defensive fallback position: 20% of the way from our goal toward the ball.
         /// Stays close to goal to shadow incoming shots.

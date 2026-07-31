@@ -45,15 +45,18 @@ namespace RedUtils
 		/// <para>Movement.Eta étalonne sur mesures ce que Drive.GetEta estimait mal : coût réel du
 		/// virage, surcoût du flip, et freinage quand la voiture s'éloigne de sa cible (le plus gros
 		/// écart mesuré, +34 %). Voir ETA_MESURES.md.</para>
-		/// <para><b>Portée (AUDIT §1.1)</b> : ce flag pilote désormais TOUS les appelants d'ETA du
-		/// projet, décision comme exécution — <c>Rotation</c> (possession, rôles),
-		/// <c>Shot.IsValid</c> des quatre mécaniques, <c>Fifty</c>, <c>Save</c>, <c>GetBoost</c>,
-		/// <c>Arrive</c>, et les cibles de <c>MyBot</c>. Auparavant seule la stratégie passait par
-		/// Movement, les actions restant sur Drive.GetEta : un tir jugé jouable par la stratégie
-		/// pouvait être refusé par IsValid. Tout passe maintenant par
-		/// <c>Movement.EtaFor</c>.</para>
-		/// <para>Mettre à false pour retrouver Drive.GetEta PARTOUT et comparer les deux moteurs sur
-		/// les mêmes courses du banc.</para></summary>
+		/// <para><b>Portée (AUDIT §1.1) — volontairement PARTIELLE.</b> Ce flag ne concerne que les
+		/// appelants « déplacement au sol vers un point », le seul cas étalonné au banc :
+		/// <c>Rotation.FirstReachableEta</c> / <c>ComputeScore</c> (possession, rôles),
+		/// <c>MyBot.ContestPoint</c>, <c>MyBot.InterceptReachable</c> (interception de save).</para>
+		/// <para>Les tirs (<c>Shot.IsValid</c>) et les actions au contact (<c>Fifty</c>,
+		/// <c>Save</c>, <c>GetBoost</c>, <c>Arrive</c>) restent sur <c>Drive.GetEta</c>
+		/// <b>délibérément</b> : ils demandent « quand puis-je être là EN ROULANT DANS LA BONNE
+		/// DIRECTION », un cas que le banc ne mesure pas. Tout basculer sur Movement a été essayé
+		/// et <b>joue moins bien</b> (mesuré en match). Voir « domaine de validité » en tête de
+		/// Movement.cs avant d'ajouter un appelant.</para>
+		/// <para>Mettre à false pour ramener ces appelants-là sur Drive.GetEta et comparer les deux
+		/// moteurs sur les mêmes courses du banc.</para></summary>
 		public static bool MovementEngine = true;
 
 		/// <summary>Feature — Moteur de collision pour l'évaluation des tirs.
@@ -67,6 +70,37 @@ namespace RedUtils
 		/// <para>Remplace l'ancienne constante <c>MyBot.AccuratePhysics</c>, qui imposait une
 		/// recompilation pour changer de moteur. Voir Tools.cs.</para></summary>
 		public static bool RocketSimShotCheck = false;
+
+		/// <summary>Feature — Patience de tir (AUDIT §2.2).
+		/// <para>Sans ce flag, comportement d'origine : <c>Ball.Prediction.Find</c> renvoie la
+		/// PREMIÈRE slice jouable, donc le bot tire toujours le plus tôt possible, quel que soit
+		/// l'angle. Une balle qui traverse depuis le corner est frappée pendant qu'elle est encore
+		/// de côté, alors qu'attendre quelques dixièmes la place face au but.</para>
+		/// <para>Avec le flag, en <c>Possessed</c> + zone offensive uniquement, le ShotCheck refuse
+		/// les slices dont l'écart latéral au-delà du poteau dépasse la distance restante jusqu'à la
+		/// ligne — mais SEULEMENT tant que la balle revient vers l'axe. Sur une balle qui part dans
+		/// le corner, on tire quand même : attendre un mieux qui ne viendra pas revient à ne jamais
+		/// tirer.</para>
+		/// <para>Restreint à <c>Possessed</c> à dessein : c'est le seul état où l'on a le temps.
+		/// En <c>Contested</c> l'adversaire arrive ; sur un dégagement ou une save la question ne se
+		/// pose pas. Réglages : <c>MyBot.PatienceMaxX</c>, <c>MyBot.PatienceClosingSpeed</c>.</para></summary>
+		public static bool PatientShot = true;
+
+		/// <summary>Feature — Boost ramassé sur le trajet de repli (AUDIT §2.4).
+		/// <para>Sans ce flag, comportement d'origine : le Support ne collecte que via l'hystérésis
+		/// 30/60, et le pad est choisi parmi les gros pads goal-side de la balle — ce qui peut
+		/// imposer une longue traversée. Se replacer et se recharger sont deux activités séparées.
+		/// </para>
+		/// <para>Avec le flag, un repli (<c>Arrive→Couverture</c>, <c>Arrive→BackupPos</c>) passe
+		/// par un pad quand celui-ci est presque sur le chemin : plus près de la destination que
+		/// nous, même côté de terrain, et détour borné (<c>Rotation.MaxDetour</c>). Le score est le
+		/// détour, pas la distance au pad — c'est le détour qui se paie en position. Les petits pads
+		/// sont pénalisés (<c>SmallPadPenalty</c>), et au-dessus de <c>BoostSeekCeiling</c> aucun
+		/// détour n'est envisagé.</para>
+		/// <para>Limité au Support pour l'instant. L'étendre à l'Attacker (qui peut jouer tout un
+		/// match à 0 boost) demande de décider quand un repli d'Attacker est un vrai repli — à
+		/// traiter séparément.</para></summary>
+		public static bool RetreatBoost = true;
 
 		/// <summary>DEBUG — Banc d'étalonnage de l'ETA à vitesse maximale.
 		/// <para>Quand ce flag est vrai, le bot ABANDONNE toute stratégie : il roule à fond (boost

@@ -143,8 +143,8 @@ namespace RedUtils
 
 		/// <summary>Feature — Circuit de save unifié (action Save dirigée).
 		/// <para><b>false</b> (défaut) = ancien circuit : FindShot(Save) si un tir dirigé est jouable,
-		/// sinon interception d'urgence <c>Drive→Save</c> qui se met dans la trajectoire (goal-side,
-		/// cible latchée). <b>true</b> = nouvelle action <c>Save</c> unique (approche goal-side + frappe
+		/// sinon interception d'urgence <c>Arrive→Save</c> temporisée sur la trajectoire (dernière slice
+		/// atteignable, cible latchée). <b>true</b> = nouvelle action <c>Save</c> unique (approche goal-side + frappe
 		/// par hauteur + dodge dirigé), qui remplace tout le circuit.</para>
 		/// <para>Laissé désactivable pour comparer : la nouvelle action est encore en rodage.</para></summary>
 		public static bool UnifiedSave = false;
@@ -153,9 +153,9 @@ namespace RedUtils
 		/// <para>Sans ce flag, comportement d'origine : sur une balle qui arrive dans notre camp le bot
 		/// fait Fifty/Drive→Balle sans se soucier de sa position → touches non maîtrisées vers notre but.</para>
 		/// <para>Avec le flag, trois priorités AVANT la logique standard :</para>
-		/// <para>• SAVE (tous rôles) : si Ball.Prediction voit la balle entrer dans NOTRE but,
-		/// tir de dégagement (Target away-from-goal) ; sinon interception d'urgence sur la
-		/// trajectoire avec boost autorisé (intent Shot→Save / Drive→Save).</para>
+		/// <para>• SAVE (Attacker et solo) : si Ball.Prediction voit la balle entrer dans NOTRE but,
+		/// tir de dégagement (Target away-from-goal) ; sinon interception d'urgence temporisée sur la
+		/// trajectoire (intent Shot→Save / Arrive→Save). Le Support garde sa couverture.</para>
 		/// <para>• DÉGAGEMENT (Attacker) : balle dans notre tiers ou fonçant vers notre but →
 		/// tir loin du but (intent Shot→Dégagement).</para>
 		/// <para>• GOAL-SIDE (Attacker) : jamais de contact en poursuivant la balle vers notre propre
@@ -163,6 +163,22 @@ namespace RedUtils
 		/// C'est LE correctif anti-CSC : un Fifty/contact n'est tenté que goal-side,
 		/// donc la poussée (voiture→balle) part toujours vers le camp adverse.</para></summary>
 		public static bool DefensiveOverhaul = true;
+
+		/// <summary>Feature — Challenge d'un dribble adverse plutôt qu'une save passive.
+		/// <para>Sans ce flag, comportement d'origine : dès que <c>Ball.Prediction.FindGoal</c> voit
+		/// la balle entrer dans notre but (priorité 1 de <c>TryDefensivePriority</c>), le bot fait la
+		/// save — et quand aucun tir dirigé n'est jouable, il tombe sur <c>Arrive→Save</c> qui se
+		/// TEMPORISE sur un point d'interception goal-side. Or un adversaire qui dribble la balle vers
+		/// notre cage fait prédire un but à CHAQUE tick (la prédiction ignore sa voiture) : le bot
+		/// attend l'interception au lieu de contester, et le porteur frappe le premier, même quand on
+		/// est aussi près de la balle que l'adversaire.</para>
+		/// <para>Avec le flag, quand la prédiction voit un but MAIS que c'est en réalité un 50/50 à nos
+		/// pieds — adversaire ET nous à moins de <c>FiftyChallengeRange</c> de la balle, balle basse
+		/// (dribble sol) et nous GOAL-SIDE (challenge sain, anti-CSC) — on déclenche un <c>Fifty</c>
+		/// pour disputer la balle au lieu de reculer. Le <c>Fifty</c> restant interruptible, si la
+		/// prédiction bascule vers un tir cadré imparable on repasse en save au tick suivant.</para>
+		/// <para>Réglages dans Bot.cs : <c>FiftyChallengeRange</c>, <c>ChallengeMaxBallHeight</c>.</para></summary>
+		public static bool ChallengeOverDriveSave = true;
 
 		/// <summary>DEBUG — Trace un tir en cours, 10 fois par seconde, jusqu'à sa fin.
 		/// <para>Sert à départager POURQUOI un tir rate, sans supposer : mauvaise cible, arrivée

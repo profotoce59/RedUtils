@@ -57,6 +57,14 @@ namespace Bot
         private const float SupportBoostHigh = 60f;
         private bool _collectingBoost;
 
+        // --- Challenge d'un dribble adverse plutôt qu'une save passive (Fixes.ChallengeOverDriveSave) ---
+        // En deçà de cette distance à la balle, pour NOUS comme pour l'adversaire le plus proche, on
+        // considère qu'on est tous deux « sur la balle » : c'est un 50/50 à disputer, pas une
+        // trajectoire à intercepter en reculant.
+        private const float FiftyChallengeRange = 600f;
+        // Balle plus haute que ça = ce n'est plus un dribble au sol contestable par un Fifty plat.
+        private const float ChallengeMaxBallHeight = 300f;
+
         public MyBot(string botName, int botTeam, int botIndex) : base(botName, botTeam, botIndex) { }
 
         private void SetAction(IAction action, string intent)
@@ -92,6 +100,7 @@ namespace Bot
             _lastLoggedTouchTime = -1f;
 
             _saveTargetTime = -1f;
+            _saveArrivalTime = -1f;
 
             // Force the next Run() to log the fresh state instead of staying silent because
             // gameState/zone/role/intent happen to match what was latched before the reset.
@@ -505,7 +514,7 @@ namespace Bot
                 string raw = rawState != gameState ? $" raw={rawState}" : "";
                 if(Me.Name == "MyBot")
                 {
-                    Console.WriteLine($"[{Game.Time:F1}s][{Me.Name}] state={gameState}{raw} zone={fieldZone} role={role?.ToString() ?? "-"} intent={_intent ?? "none"}{runningAction} boost={Me.Boost:F0} dist={Me.Location.Dist(Ball.Location):F0} eta={Fmt(ourEta)}/{Fmt(theirEta)} oppDist={Fmt(oppDist)} ballV={Ball.Velocity.Length():F0} lastTouch={(Ball.LatestTouch == null ? "-" : Ball.LatestTouch.Team == Me.Team ? "nous" : "eux")}");
+                    Console.WriteLine($"[{Game.Time:F1}s][{Me.Name}] state={gameState}{raw} zone={fieldZone} role={role?.ToString() ?? "-"} intent={_intent ?? "none"}{runningAction} boost={Me.Boost:F0} dist={Me.Location.Dist(Ball.Location):F0} eta={Fmt(ourEta)}/{Fmt(theirEta)} oppDist={Fmt(oppDist)} ballV={Ball.Velocity.Length():F0} ballZ={Ball.Location.z:F0} challenge={(IsCloseContestGoalSide() ? "oui" : "non")} lastTouch={(Ball.LatestTouch == null ? "-" : Ball.LatestTouch.Team == Me.Team ? "nous" : "eux")}");
                 }
                 _lastState = gameState;
                 _lastZone = fieldZone;
@@ -777,8 +786,25 @@ namespace Bot
             // FindGoal(team) = balle marquant EN FAVEUR de team → notre but encaisse pour team adverse
             BallSlice goalSlice = Ball.Prediction.FindGoal(1 - Me.Team);
 
-            if (goalSlice != null)
+            // Le save ultime est réservé à l'Attacker (et au solo, role == null). Avec la règle de
+            // proximité de ComputeScore, l'Attacker EST le plus proche de la balle : c'est donc lui
+            // qui va au save/challenge, pendant que le Support tient la couverture du but. Sans cette
+            // garde, les deux bots déclenchaient la save en même temps et convergeaient sur la balle.
+            if (goalSlice != null && role != Role.Support)
             {
+                // La prédiction voit un but PARCE QUE l'adversaire porte la balle vers notre cage
+                // (elle ignore sa voiture et extrapole tout droit). Mais si c'est un 50/50 à nos pieds
+                // et qu'on est goal-side, temporiser sur l'interception (Arrive→Save) laisse le porteur
+                // frapper le premier : on CHALLENGE. Placé avant les deux circuits de save — la décision
+                // de disputer ne dépend pas de Fixes.UnifiedSave. Fifty reste interruptible : si la
+                // trajectoire devient un tir cadré imparable, on repasse en save au tick suivant.
+                if (Fixes.ChallengeOverDriveSave && IsCloseContestGoalSide())
+                {
+                    if (Action is not Fifty)
+                        SetAction(new Fifty(), "Fifty");
+                    return true;
+                }
+
                 // Nouveau circuit unifié (Fixes.UnifiedSave) : l'action Save se place goal-side et
                 // frappe selon la hauteur en renvoyant la balle vers le camp adverse.
                 if (Fixes.UnifiedSave)
@@ -802,24 +828,50 @@ namespace Bot
                     return true;
                 }
 
-                BallSlice intercept = FindInterceptSlice(goalSlice.Time);
+                // Cible = première slice atteignable avec marge de confort (au-devant de la balle),
+                // et on note l'instant où la balle y sera : c'est lui qui donne la cadence à l'Arrive.
+                BallSlice intercept = FindSaveInterceptSlice(goalSlice.Time);
                 Vec3 saveTarget;
+                float saveArrivalTime;
                 if (intercept != null)
                 {
-                    saveTarget = GoalSideContact(intercept.Location);
+                    saveTarget = GoalSideContact(intercept.Location, intercept.Velocity);
+                    saveArrivalTime = intercept.Time;
                     _saveTarget = saveTarget;
+                    _saveArrivalTime = saveArrivalTime;
                     _saveTargetTime = Game.Time;
                 }
                 else if (Game.Time - _saveTargetTime < SaveLatchTime)
+                {
                     saveTarget = _saveTarget;
+                    saveArrivalTime = _saveArrivalTime;
+                }
                 else
+                {
+                    // Aucune interception : repli près-but, sans cadence imposée (arrivalTime < 0).
                     saveTarget = OurGoal.Location + OurGoal.Location.FlatDirection(Ball.Location) * 300f;
+                    saveArrivalTime = -1f;
+                }
 
-                if (Action is Drive saveDrive && _intent == "Drive→Save"
-                    && saveDrive.Target.Dist(saveTarget) < RetargetDistance)
-                    saveDrive.Target = saveTarget;
+                // Arrive (et non Drive) : il DOSE sa vitesse (distance / temps restant) pour arriver
+                // PILE à saveArrivalTime au lieu de foncer et de dépasser la balle.
+                //
+                // SANS direction d'arrivée (null) : la mise en ligne d'Arrive recule le point
+                // d'approche de ~0.6× la distance À CONTRE-SENS de la direction visée — donc vers
+                // NOTRE but — et le plante DANS LE FILET sur un save profond (Arrive.cs:82). Ce shift
+                // ne s'active en plus que lorsqu'on temporise (targetSpeed < 2200), soit exactement
+                // notre cas. On garde donc le seul pacing et on vise le point de contact directement :
+                // il est déjà DEVANT la ligne (ContactInFrontOfGoal a filtré le slice), et comme il est
+                // goal-side de la balle, le contact la renvoie vers le terrain sans qu'on ait à orienter
+                // la voiture.
+                if (Action is Arrive saveArrive && _intent == "Arrive→Save"
+                    && saveArrive.Target.Dist(saveTarget) < RetargetDistance)
+                {
+                    saveArrive.Target = saveTarget;
+                    saveArrive.ArrivalTime = saveArrivalTime;
+                }
                 else
-                    SetAction(new Drive(Me, saveTarget, wasteBoost: true), "Drive→Save");
+                    SetAction(new Arrive(Me, saveTarget, null, saveArrivalTime), "Arrive→Save");
                 return true;
             }
 
@@ -969,27 +1021,85 @@ namespace Bot
 
         // ---- Ancien circuit de save (Fixes.UnifiedSave == false) ----
 
-        /// <summary>Première slice dont le contact goal-side est atteignable à temps et devant la ligne.</summary>
-        private BallSlice FindInterceptSlice(float beforeTime)
+        /// <summary>Marge de confort VISÉE : on préfère la première slice qu'on atteint avec ce battement,
+        /// pour aller au-devant de la balle sans finir sur un point à marge nulle. C'est une préférence,
+        /// pas un plancher (voir la note de repli dans <see cref="FindSaveInterceptSlice"/>). Volontairement
+        /// petit : sur une balle rapide, 0.15 s pousserait déjà l'interception bien trop profond.</summary>
+        private const float SaveInterceptMargin = 0.1f;
+
+        /// <summary>
+        /// Slice à intercepter pour le save : la PLUS TÔT qu'on atteint avec la marge de confort
+        /// <see cref="SaveInterceptMargin"/>. On va ainsi AU-DEVANT de la balle (haut, loin du but)
+        /// plutôt que de l'attendre devant la cage (ce que faisait « la dernière slice », trop passif),
+        /// sans pour autant viser un point à marge nulle (« la première slice », trop fragile).
+        ///
+        /// <para><b>La marge est une préférence, pas une barrière.</b> Si aucune slice atteignable ne
+        /// l'offre — balle rapide, fenêtre étroite — on retombe sur la <b>plus tôt atteignable tout
+        /// court</b>, même serrée : un save juste vaut mieux que pas de save. Le pacing de l'Arrive
+        /// empêche le dépassement dans les deux cas.</para>
+        ///
+        /// <para>L'atteignabilité passe par <c>Movement.EtaFor</c> (moteur documenté « aller à un point
+        /// au sol »), via <see cref="InterceptSlack"/>.</para>
+        /// </summary>
+        private BallSlice FindSaveInterceptSlice(float beforeTime)
         {
-            return Ball.Prediction.Find(s => InterceptReachable(s, beforeTime));
+            BallSlice earliest = null;   // repli : la plus tôt atteignable, même à marge nulle
+            foreach (BallSlice s in Ball.Prediction.Slices)
+            {
+                // Slices chronologiques : passé la ligne de but, plus rien d'utile à tester.
+                if (s.Time >= beforeTime)
+                    break;
+                if (s.Time <= Game.Time)
+                    continue;
+
+                float slack = InterceptSlack(s);
+                if (float.IsNaN(slack) || slack < 0f)
+                    continue;               // contact dans le filet, ou hors de portée à temps
+
+                earliest ??= s;
+                if (slack >= SaveInterceptMargin)
+                    return s;               // la plus tôt qui tient la marge de confort
+            }
+            return earliest;
         }
 
-        /// <summary>La voiture peut-elle bloquer cette slice goal-side, à temps, sans finir dans son but ?</summary>
-        private bool InterceptReachable(BallSlice s, float beforeTime)
+        /// <summary>
+        /// Battement pour bloquer cette slice goal-side : (temps avant la slice) − (notre ETA vers le
+        /// point de contact). Positif = atteignable avec cette marge ; négatif = hors de portée à temps.
+        /// <c>NaN</c> si le contact tomberait DERRIÈRE notre ligne (slice inutile — c'est le filtre qui
+        /// interdit d'accepter une balle déjà entrée). ETA via <c>Movement.EtaFor</c>.
+        /// </summary>
+        private float InterceptSlack(BallSlice s)
         {
-            if (s.Time <= Game.Time || s.Time >= beforeTime)
-                return false;
-            Vec3 contact = GoalSideContact(s.Location);
-            return ContactInFrontOfGoal(contact)
-                && Movement.EtaFor(Me, contact) <= s.Time - Game.Time;
+            Vec3 contact = GoalSideContact(s.Location, s.Velocity);
+            if (!ContactInFrontOfGoal(contact))
+                return float.NaN;
+            return (s.Time - Game.Time) - Movement.EtaFor(Me, contact);
         }
 
-        /// <summary>Point de contact goal-side de la balle (entre elle et notre but).</summary>
-        private Vec3 GoalSideContact(Vec3 ballLocation)
+        /// <summary>En deçà de cette vitesse, la direction de la balle n'est pas fiable pour en déduire
+        /// le point de contact (elle roule/hésite) : on retombe sur « vers notre but ».</summary>
+        private const float SlowBallSpeed = 300f;
+
+        /// <summary>
+        /// Point de contact pour BLOQUER la balle : sur SON chemin, du côté de notre but, décalé du
+        /// rayon balle + demi-voiture pour que les carrosseries se touchent quand la balle arrive.
+        ///
+        /// <para>La direction retenue est celle de la balle (on la bloque de face, ce qui est plus juste
+        /// qu'un décalage vers le centre du but sur un tir qui rentre en angle). Sur une balle lente
+        /// (&lt; <see cref="SlowBallSpeed"/>) sa vitesse n'indique plus rien, on retombe sur la direction
+        /// vers notre but.</para>
+        ///
+        /// <para>On ne clampe PAS le résultat devant la ligne ici : c'est <see cref="ContactInFrontOfGoal"/>
+        /// qui filtre les slices dont le contact tomberait dans le filet. Clamper masquerait ce test et
+        /// ferait accepter une slice déjà passée derrière la ligne.</para>
+        /// </summary>
+        private Vec3 GoalSideContact(Vec3 ballLocation, Vec3 ballVelocity)
         {
-            Vec3 toOurGoal = ballLocation.FlatDirection(OurGoal.Location);
-            return ballLocation + toOurGoal * (Ball.Radius + CarHalfLength);
+            Vec3 toGoalSide = ballVelocity.FlatLen() > SlowBallSpeed
+                ? ballVelocity.FlatNorm()
+                : ballLocation.FlatDirection(OurGoal.Location);
+            return ballLocation + toGoalSide * (Ball.Radius + CarHalfLength);
         }
 
         /// <summary>
@@ -1023,6 +1133,22 @@ namespace Bot
                 if (d < distance) { distance = d; nearest = opp; }
             }
             return nearest;
+        }
+
+        /// <summary>
+        /// Vrai quand la situation est un 50/50 à nos pieds plutôt qu'une save passive : l'adversaire
+        /// le plus proche ET nous sommes tous deux « sur la balle » (&lt; <see cref="FiftyChallengeRange"/>),
+        /// la balle est basse (dribble sol) et on est goal-side — donc challenger la pousse vers le camp
+        /// adverse, pas dans notre but. Détection PURE (sans le flag), partagée par l'override de
+        /// <see cref="TryDefensivePriority"/> et par la ligne de log (champ <c>challenge=</c>).
+        /// </summary>
+        private bool IsCloseContestGoalSide()
+        {
+            NearestOpponentToBall(out float oppDist);
+            return oppDist < FiftyChallengeRange
+                && Me.Location.Dist(Ball.Location) < FiftyChallengeRange
+                && Ball.Location.z < ChallengeMaxBallHeight
+                && IsGoalSide();
         }
 
         /// <summary>
@@ -1230,6 +1356,7 @@ namespace Bot
         private string _lastTracedShot = null;
         // Ancien circuit de save : cible d'interception latchée (gardée quand un tick n'en trouve pas).
         private Vec3 _saveTarget;
+        private float _saveArrivalTime = -1f;   // instant où la balle atteint la cible (pace de l'Arrive)
         private float _saveTargetTime = -1f;
         private const float SaveLatchTime = 0.4f;
 

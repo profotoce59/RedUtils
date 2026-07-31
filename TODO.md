@@ -15,7 +15,10 @@
 - [x] **Pressing offensif** (`Fixes.OffensivePressing`) — en `NotPossessed` + balle chez l'adversaire, on conteste au lieu de se replier. Voir `STRATEGY.md`
 - [x] **Latch des tirs** — `ShotInProgress` : un `Shot` en cours n'est plus recréé à chaque tick (il gère son propre cycle de vie : rafraîchit sa cible toutes les 0.2s et s'auto-abandonne)
 - [x] **Bug save DEF1 (`GetEta` optimiste au démarrage)** — `minSpeed = MathF.Max(..., 1400)` supposait la voiture déjà lancée à 1400 uu/s : aucun modèle d'accélération au sol n'existait dans le projet. Sur DEF1 (voiture immobile au spawn) l'ETA annonçait 1.11s pour un trajet en demandant ~1.45s → le tir n'était jouable à aucun moment. Remplacé par une intégration de la vraie courbe d'accélération (`Drive.TimeToCoverDistance`)
-- [x] **Bug save DEF1 (interception)** — la cible d'interception d'urgence (`Drive→Save`) prenait la PREMIÈRE slice atteignable (`Ball.Prediction.Find`, balayage chronologique) : un point structurellement à marge nulle où la moindre erreur de `Drive.GetEta` fait rater le save. `FindLatestInterceptableSlice` cherche maintenant depuis la ligne de but vers l'arrière et prend la DERNIÈRE slice atteignable — plus proche du but, plus de marge des deux côtés
+- [x] **Bug save (interception `Arrive→Save`)** — trois défauts liés :
+  1. **Slice ciblée** : la PREMIÈRE atteignable (`Ball.Prediction.Find`) est à marge nulle (fragile) ; la DERNIÈRE attend la balle devant la cage (trop passif). `FindSaveInterceptSlice` prend la **plus tôt avec une marge de confort** (`SaveInterceptMargin`=0.1s), **souple** (repli sur la plus tôt atteignable si la balle est trop rapide). Atteignabilité via `Movement.EtaFor` (`InterceptSlack`).
+  2. **Point de contact** déduit de la **direction de la balle** (`GoalSideContact`) pour la bloquer de face, repli « vers notre but » si balle lente (< `SlowBallSpeed`).
+  3. **Exécution** : `Arrive` **sans direction d'arrivée** (pacing seul) au lieu d'un `Drive` full-send — le Drive fonçait et dépassait la balle ; la mise en ligne d'`Arrive` avec direction plantait le point d'approche dans le filet
   
 ---
 

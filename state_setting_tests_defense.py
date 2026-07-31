@@ -53,7 +53,51 @@ def parked(x, y, yaw=YAW_ORANGE, boost=0):
 
 
 TEST_STATES = [
-    
+    (
+        # BUG observe : l'adversaire dribble la balle vers NOTRE but (y=+5120), nous
+        # (ORANGE1) sommes goal-side, juste en face de lui, a ~300u de la balle. La
+        # prediction extrapole la balle droit dans la cage -> priorite 1 de
+        # TryDefensivePriority (goalSlice != null) -> "Drive->Save" : on RECULE vers le
+        # but au lieu de contester. Attendu apres correctif : "Fifty" (challenge 50/50),
+        # puisque oppDist ~= notre dist et qu'on est goal-side (challenge sain).
+        #
+        # A observer (overlay INTENT + log console) :
+        #   - AVANT : intent=Drive->Save, dist ~= oppDist ~= 200-300, ballV ~2000
+        #   - APRES : intent=Fifty
+        # Note : blue1 ne "dribblera" vraiment que si c'est un bot qui dribble ; mais la
+        # DECISION du bot se prend sur la geometrie de cet instant, deja reproduite ici.
+        "Dribble adverse vers notre but — 50/50 goal-side (doit challenger, pas Drive->Save)",
+        GameState(
+            ball=BallState(physics=Physics(
+                location=Vector3(-1200, 4000, 93),
+                velocity=Vector3(0, 2000, 0),   # fonce vers notre but (+y)
+                )),
+            cars={
+                # Nous : goal-side (y plus grand = plus pres de notre but), face a la balle (-y)
+                PLAYER_ORANGE1: CarState(
+                    physics=Physics(
+                        location=Vector3(-1200, 4300, ONGROUNDHEIGHT),
+                        rotation=Rotator(pitch=0, yaw=YAW_BLUE, roll=0),
+                        velocity=Vector3(0, 0, 0),
+                    ),
+                    boost_amount=0,
+                ),
+                # Coequipier vivant (pour que le role soit calcule) mais loin -> nous = Attacker
+                PLAYER_ORANGE2: parked(3000, 4800),
+                # L'adversaire qui porte la balle : juste derriere elle, meme cap (+y), lance
+                PLAYER_BLUE1: CarState(
+                    physics=Physics(
+                        location=Vector3(-1200, 3650, ONGROUNDHEIGHT),
+                        rotation=Rotator(pitch=0, yaw=YAW_ORANGE, roll=0),
+                        velocity=Vector3(0, 1400, 0),
+                    ),
+                    boost_amount=50,
+                ),
+                # Second adversaire loin, hors du coup
+                PLAYER_BLUE2: parked(-3000, -4600, yaw=YAW_ORANGE),
+            },
+        ),
+    ),
 ]
 
 

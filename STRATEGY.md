@@ -14,7 +14,7 @@
 | `Drive(ShadowPosition)` | Conduite vers le point à 60% entre notre but et la balle — le bot fait face à la balle |
 | `Drive(Pressing)` | Conduite vers le point à 1100u goal-side de la balle — vient presser le porteur adverse |
 | `Drive(Contest)` | Conduite vers le point à 500u goal-side de la balle — l'Attacker challenge le porteur en défense (2v2, Support couvre) |
-| `Shot→Save` / `Drive→Save` | Priorité défensive absolue : la balle va rentrer dans notre but, tir de dégagement ou interception d'urgence |
+| `Shot→Save` / `Arrive→Save` | Priorité défensive absolue : la balle va rentrer dans notre but, tir de dégagement ou interception d'urgence **temporisée** (Arrive qui arrive pile à l'heure sur le point d'interception) |
 | `Shot→Dégagement` | Balle dangereuse dans notre tiers (Attacker) : tir loin de notre but |
 | `Drive→GoalSide` | Repli entre la balle et notre but avant tout contact — anti-CSC |
 | `FindShot(LeurBut)` | Cherche un tir vers le but adverse |
@@ -71,19 +71,43 @@ quand il diffère de l'état retenu.
 ### Priorités défensives (`TryDefensivePriority`, tous rôles, avant tout le reste)
 Évaluées à chaque tick avant la logique standard (Support ou Attacker). Contrôlées par les flags de `Fixes.cs`.
 
-1. **SAVE** _(si `Fixes.DefensiveOverhaul`, tous rôles)_ — `Ball.Prediction.FindGoal(adversaire)` voit la balle franchir NOTRE ligne :
+1. **SAVE** _(si `Fixes.DefensiveOverhaul`, **Attacker et solo uniquement**)_ — `Ball.Prediction.FindGoal(adversaire)` voit la balle franchir NOTRE ligne. Le Support n'y touche pas : il tient la couverture du but. Avec la règle de proximité de `ComputeRole` (ci-dessous), l'Attacker EST le plus proche de la balle → c'est lui qui sauve, l'autre couvre. Sans cette garde, les deux bots déclenchaient la save ensemble et convergeaient sur la balle.
+   - **CHALLENGE d'abord** _(si `Fixes.ChallengeOverDriveSave`, **Attacker et solo uniquement**)_ — la prédiction voit souvent un but simplement **parce que l'adversaire porte la balle vers notre cage** (elle ignore sa voiture et extrapole tout droit). Si c'est en réalité un **50/50 à nos pieds** — adversaire le plus proche **et** nous à < `FiftyChallengeRange` (600u) de la balle, balle basse (`z` < `ChallengeMaxBallHeight` = 300u, dribble sol) **et** on est **goal-side** — on déclenche un `Fifty` pour disputer la balle au lieu de reculer en save passive. Placé **avant** les deux circuits de save (décision indépendante de `Fixes.UnifiedSave`). **Réservé à l'Attacker** : un Support qui challengerait ici abandonnerait sa couverture → les deux bots iraient sur la balle. Le `Fifty` reste interruptible : si la trajectoire devient un tir cadré imparable, on repasse en save au tick suivant.
+     _Signal visible dans le log : champ `challenge=oui/non` (+ `ballZ=`)._
    - `FindShot(OurGoal, shootAwayFromGoal: true)` → `Shot→Save` si un tir est jouable
-   - Sinon, interception d'urgence sur la trajectoire (boost autorisé, `wasteBoost: true`) → `Drive→Save`.
-     La cible est la **dernière** slice atteignable avant la ligne de but (`FindLatestInterceptableSlice`),
-     pas la première : `Ball.Prediction.Find` balaie du plus tôt au plus tard et s'arrête à la première
-     slice tout juste atteignable — un point structurellement à marge nulle, où la moindre erreur de
-     `Drive.GetEta` fait rater le save. En cherchant depuis la ligne de but vers l'arrière, la dernière
-     slice atteignable est plus proche du but : moins de distance à couvrir, plus de temps accordé.
+   - Sinon, interception d'urgence **temporisée** sur la trajectoire → `Arrive→Save`.
+     - **Slice ciblée** = la **plus tôt** atteignable avec une petite **marge de confort**
+       (`SaveInterceptMargin` = 0.1s), via `FindSaveInterceptSlice`. On va **au-devant** de la balle
+       (haut, loin du but) au lieu de l'attendre devant la cage (ce que faisait « la dernière slice »,
+       trop passif) — sans viser un point à **marge nulle** (« la première slice », trop fragile). La
+       marge est une **préférence, pas une barrière** : si aucune slice ne l'offre (balle rapide,
+       fenêtre étroite), on retombe sur la **plus tôt atteignable tout court**, même serrée — un save
+       juste vaut mieux que pas de save, et le pacing empêche le dépassement de toute façon.
+       L'atteignabilité (`InterceptSlack`) passe par **`Movement.EtaFor`** — le moteur documenté pour
+       « aller à un point au sol » — donc la sélection est cohérente sur un seul moteur.
+     - **Point de contact déduit de la DIRECTION de la balle** (`GoalSideContact`) : on se place sur le
+       chemin de la balle, côté but, décalé de `rayon + demi-voiture` pour la **bloquer de face** — plus
+       juste qu'un décalage vers le centre du but sur un tir qui rentre en angle. Sur une balle lente
+       (`< SlowBallSpeed` = 300u) la vitesse n'indique rien → repli sur « vers notre but ». Le filtrage
+       devant la ligne reste fait par `ContactInFrontOfGoal` (pas de clamp dans `GoalSideContact`, sinon
+       une slice déjà dans le filet passerait le test).
+     - **Exécution** = `Arrive` (et **non** `Drive`), `arrivalTime` = l'instant du slice, **sans direction
+       d'arrivée**. Un `Drive` fonce à `MaxSpeed` + boost et **ne freine jamais** → il dépasse la balle
+       (« passé trop devant »). `Arrive` dose sa vitesse (`distance / temps restant`,
+       [Arrive.cs:59](RedUtils/Actions/Arrive.cs)) pour arriver **pile** quand la balle y sera. On ne lui
+       donne **pas** de direction d'arrivée : sa mise en ligne recule le point d'approche de ~0.6× la
+       distance vers notre but ([Arrive.cs:82](RedUtils/Actions/Arrive.cs)) et le planterait **dans le
+       filet** sur un save profond — et ce shift ne s'active justement que lorsqu'on temporise. Le point
+       de contact étant déjà devant la ligne et goal-side, le contact renvoie la balle vers le terrain
+       sans qu'on ait à orienter la voiture.
+     - **Répartition des moteurs d'ETA** : la *sélection* du point est un déplacement au sol → `Movement`
+       (documenté, calibré) ; l'*exécution* est un contact approché → `Arrive`/`Drive.GetEta`, hors du
+       domaine de Movement et mesuré meilleur en jeu. Le bon moteur à chaque phase, pas un seul partout.
 2. **DÉGAGEMENT** _(Attacker uniquement, zone défensive)_ — déclenché si la balle est **dangereuse** : elle fonce vers notre but (`headingToUs`), OU elle est dans notre tiers **et** contestable (un adversaire à < 2500u d'elle). Une balle simplement posée sans adversaire proche n'est **pas** dégagée (cas DEF5 — on la contrôle). → `FindShot(Dégagement)` → `Shot→Dégagement`
    - **Sauf si `NotPossessed`** _(adversaire arrive > 0.4s avant nous, souvent il contrôle déjà la balle)_ : un dégagement suppose d'atteindre la balle en premier. `FindShot` ignore les touches adverses et s'accrocherait à un slice lointain que l'adversaire aura frappé bien avant (Shot→Dégagement fantôme). On saute alors le dégagement et on laisse la logique NotPossessed (`Drive→Contest` / `Fifty`) se rapprocher pour disputer le 50/50.
 3. **GOAL-SIDE** _(Attacker uniquement, zone défensive, anti-CSC)_ — si on n'est pas entre la balle et notre but, on s'y replace AVANT tout contact (`Drive→GoalSide`) plutôt que de pousser la balle vers notre propre but en la poursuivant
 
-Le Support garde toujours sa couverture (jamais concerné par 2 et 3).
+Le Support garde toujours sa couverture (jamais concerné par 1, 2 et 3).
 
 **Latch des tirs** : un `Shot` en cours n'est pas resélectionné tant que l'intent ne change pas
 (`ShotInProgress`). Un `Shot` gère son propre cycle de vie — il rafraîchit sa cible toutes les 0.2s
@@ -94,6 +118,7 @@ imposait une cible choisie à froid, qui peut flip-flop d'un tick à l'autre sur
 
 ### Attribution des rôles (`ComputeRole`)
 Score = ETA vers la balle + pénalité de 2s si l'angle car→balle→leur but dépasse 108°. Score le plus bas = Attacker.
+- **Sur la balle → Attacker par proximité** : une voiture à moins de `OnBallDistance` (600u) de la balle reçoit un score minuscule (`distance / MaxSpeed`), qui court-circuite l'ETA. Sinon, pour une voiture **en l'air** (Fifty engagé), `Movement.EtaFor` gonfle à plusieurs secondes → elle passerait Support et le coéquipier viendrait **doubler sur la balle**. Le calcul est symétrique (les deux bots évaluent les deux voitures pareil), donc ils restent d'accord sans état partagé. Même parade que `ContestDistance` dans `ComputeGameState`.
 - **Départage d'égalité** : à score strictement égal (kickoff symétrique), l'index le plus bas est Attacker — sinon les deux bots se croient Attacker.
 - **Hystérésis (0.3s)** : le titulaire garde son rôle tant que l'autre ne le bat pas de 0.3s. Les deux conditions sont complémentaires, donc les deux bots restent d'accord sans état partagé.
 
@@ -109,7 +134,7 @@ Le décalage back post est une **rampe** sur ±1200u autour de `x = 0`, pas un `
 
 **Latch des actions** : `Drive`/`Arrive`/`GetBoost` ne sont **pas** recréés à chaque tick (la cible est mutée si elle dérive de < 800u). Recréer un `Drive` remet son `timeOnGround` à zéro, ce qui interdit dodges/speedflips/wavedashes (`Drive.cs:160` exige 0.2s au sol) — c'était la cause des replacements lents.
 
-**Usage du boost (`wasteBoost`)** : un `Drive` ne boost et ne speedflip **que** si créé avec `wasteBoost: true` (`Drive.cs:143` coupe le boost sinon, `Drive.cs:170` idem pour le speedflip) — throttle seul plafonne à `MaxThrottleSpeed` (~1400 uu/s). Les déplacements où la vitesse gagne le duel sont donc en **full-send** : `Drive→Pressing`, `Drive→Contest`, `Drive→Balle`, `Drive→GoalSide` (+ `Drive→Save`). Les placements de temporisation restent **cadencés** (boost gardé pour le duel) : `Drive→Shadow`, `Drive→Contour`, et les `Arrive` de replacement (`BackupPos`, `Couverture`).
+**Usage du boost (`wasteBoost`)** : un `Drive` ne boost et ne speedflip **que** si créé avec `wasteBoost: true` (`Drive.cs:143` coupe le boost sinon, `Drive.cs:170` idem pour le speedflip) — throttle seul plafonne à `MaxThrottleSpeed` (~1400 uu/s). Les déplacements où la vitesse gagne le duel sont donc en **full-send** : `Drive→Pressing`, `Drive→Contest`, `Drive→Balle`, `Drive→GoalSide`. Les placements de temporisation restent **cadencés** (boost gardé pour le duel) : `Drive→Shadow`, `Drive→Contour`, et les `Arrive` de replacement (`BackupPos`, `Couverture`). Le save (`Arrive→Save`) est lui aussi **cadencé** : Arrive dose sa vitesse pour arriver pile à l'heure sur l'interception — foncer dépasserait la balle.
 
 ---
 

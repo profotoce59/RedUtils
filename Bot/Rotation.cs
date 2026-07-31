@@ -19,6 +19,11 @@ namespace Bot
         // Avantage de score requis pour prendre le rôle d'Attacker au titulaire (anti-clignotement)
         private const float RoleSwitchMargin = 0.3f;
 
+        // Une voiture à moins de ça de la balle est « sur la balle » : elle est l'Attacker par simple
+        // proximité, en court-circuitant Movement.EtaFor (qui gonfle à plusieurs secondes pour une
+        // voiture en l'air, ex. un Fifty engagé). Aligné sur MyBot.FiftyChallengeRange (600u).
+        private const float OnBallDistance = 600f;
+
         /// <summary>
         /// Determines whether this car is the attacker or the support in a 2v2.
         /// Both bots call this independently each tick and will agree without shared state:
@@ -51,6 +56,16 @@ namespace Bot
         /// </summary>
         private static float ComputeScore(Car car, Goal theirGoal)
         {
+            // Déjà SUR la balle → Attacker, quoi qu'en dise l'ETA. Pour une voiture en l'air (Fifty /
+            // challenge engagé), Movement.EtaFor gonfle à plusieurs secondes et la ferait passer
+            // Support, envoyant le coéquipier doubler sur la balle. On la classe donc par simple
+            // proximité : score minuscule, dominant, et SYMÉTRIQUE — les deux bots calculent le même
+            // score pour les deux voitures, donc restent d'accord sans état partagé. Même parade que
+            // ContestDistance dans ComputeGameState.
+            float ballDist = car.Location.Dist(Ball.Location);
+            if (ballDist < OnBallDistance)
+                return ballDist / Car.MaxSpeed;
+
             // First ball slice this car can physically reach in time
             BallSlice commitSlice = Ball.Prediction.Find(slice =>
                 Movement.EtaFor(car, slice.Location) <= slice.Time - Game.Time);

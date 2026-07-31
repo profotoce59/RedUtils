@@ -25,12 +25,8 @@ namespace RedUtils
 	/// derniers ~800 uu : au-delà, √(2·3500·d) dépasse déjà la vitesse maximale, donc le trajet
 	/// n'est pas ralenti.</para>
 	///
-	/// <para><b>Tenue.</b> Une fois sur place : si le nez n'est pas dans l'axe de la balle, on
-	/// pivote (un peu de gaz, frein à main si l'écart est grand et qu'il reste de la vitesse — le
-	/// demi-tour dans le but) ; si l'alignement est bon, on tue la vitesse résiduelle. L'entrée et
-	/// la sortie de tenue ont des rayons différents (<see cref="HoldRadius"/> /
-	/// <see cref="ReleaseRadius"/>) : sans cette bande morte, le pivot fait sortir du rayon, ce qui
-	/// relance une approche, qui ramène dans le rayon — et la voiture tourne en rond sur place.</para>
+	/// <para><b>Tenue.</b> Voir <see cref="Hold"/> : l'écart de cap décide entre un arc avant (petit
+	/// écart) et un demi-tour en marche arrière (grand écart).</para>
 	/// </summary>
 	public class Cover : IAction
 	{
@@ -43,27 +39,51 @@ namespace RedUtils
 		/// <summary>Le point vers lequel pointer le nez une fois en place (la balle).</summary>
 		public Vec3 FacePoint;
 
-		private readonly Drive _drive;
+		private Drive _drive;
+		private Vec3 _driveBuiltFor;
 		private bool _holding;
 
+		/// <summary>
+		/// Sens de rotation retenu pour le pivot en cours. 0 = aucun pivot.
+		///
+		/// <para>Latché parce que l'écart de cap est un <c>Atan2</c> : sur une cible pile derrière
+		/// nous il vaut +π ou −π selon un bruit de quelques unités, et le braquage changerait de
+		/// signe d'une frame à l'autre. La voiture tremblerait sur place au lieu de tourner.</para>
+		/// </summary>
+		private int _turnSign;
+
 		/// <summary>En deçà de ce rayon, on considère le poste tenu.</summary>
-		private const float HoldRadius = 200f;
-		/// <summary>Au-delà de ce rayon, on repart en approche. Bande morte anti-va-et-vient.</summary>
-		private const float ReleaseRadius = 450f;
+		private const float HoldRadius = 250f;
+		/// <summary>
+		/// Au-delà de ce rayon, on repart en approche.
+		///
+		/// <para>Doit être plus large que l'empreinte d'un demi-tour, sinon le pivot fait sortir de
+		/// la bande, ce qui relance une approche, qui ramène dans la bande, qui relance un pivot —
+		/// et la voiture se fige au cap qu'elle avait quand le test d'angle est passé. Un arc à
+		/// basse vitesse a un rayon de ~200 uu, donc un demi-tour déplace la voiture de 300 à
+		/// 500 uu : 700 laisse la marge nécessaire.</para>
+		/// </summary>
+		private const float ReleaseRadius = 700f;
 		/// <summary>Marge sur la distance de freinage : le throttle n'est ni instantané ni parfait.</summary>
 		private const float BrakeSafety = 0.8f;
 		/// <summary>En deçà de cette distance, plus de dodge : on ne flippe pas juste avant de s'arrêter.</summary>
 		private const float DodgeMinDistance = 1200f;
 		/// <summary>Écart de cap en deçà duquel on se considère aligné sur la balle.</summary>
 		private const float AlignedAngle = 0.15f;
-		/// <summary>Gaz appliqué pour pivoter sur place (il faut rouler un peu pour tourner).</summary>
-		private const float PivotThrottle = 0.35f;
-		/// <summary>Au-delà de cet écart de cap, le frein à main accélère le demi-tour.</summary>
-		private const float HandbrakeAngle = 1.2f;
-		/// <summary>Vitesse à partir de laquelle le frein à main sert à quelque chose.</summary>
-		private const float HandbrakeSpeed = 400f;
+		/// <summary>Au-delà de cet écart, l'arc avant coûte trop de terrain : on tourne en reculant.</summary>
+		private const float ForwardPivotMax = 1.0f;
+		/// <summary>Gaz appliqué pour pivoter vers l'avant (il faut rouler un peu pour tourner).</summary>
+		private const float PivotThrottle = 0.4f;
+		/// <summary>Recul supposé pour un demi-tour, utilisé pour vérifier qu'on ne rentre pas dans le but.</summary>
+		private const float ReverseRoom = 450f;
+		/// <summary>Marge devant la ligne de but à préserver en reculant.</summary>
+		private const float GoalLineMargin = 150f;
+		/// <summary>Au-dessus de cette vitesse, le frein à main aide à faire tourner la voiture.</summary>
+		private const float HandbrakeSpeed = 500f;
 		/// <summary>Gain du freinage de maintien : throttle plein à cette vitesse résiduelle.</summary>
 		private const float StopSpeedGain = 200f;
+		/// <summary>Dérive de cible au-delà de laquelle le Drive interne est reconstruit.</summary>
+		private const float DriveRetargetDistance = 800f;
 
 		public Cover(Car car, Vec3 target, Vec3 facePoint)
 		{
@@ -73,7 +93,7 @@ namespace RedUtils
 			Target = target;
 			FacePoint = facePoint;
 
-			_drive = new Drive(car, target, Car.MaxSpeed, allowDodges: true, wasteBoost: false);
+			BuildDrive(car);
 		}
 
 		public void Run(RUBot bot)
@@ -89,9 +109,16 @@ namespace RedUtils
 			}
 
 			if (_holding && distance > ReleaseRadius)
+			{
 				_holding = false;
+				// Le pivot a pu nous placer de l'autre côté du poste : la décision marche
+				// avant/arrière de Drive date de sa construction et n'est plus valable.
+				BuildDrive(bot.Me);
+			}
 			else if (!_holding && distance < HoldRadius)
+			{
 				_holding = true;
+			}
 
 			if (_holding)
 				Hold(bot);
@@ -99,9 +126,27 @@ namespace RedUtils
 				Approach(bot, distance);
 		}
 
+		/// <summary>
+		/// (Re)construit le Drive interne.
+		///
+		/// <para><c>Drive.Backwards</c> est décidé <b>une seule fois</b>, dans le constructeur
+		/// (Drive.cs:56), et n'est remis à false que quand une sous-action se termine
+		/// (Drive.cs:211). Réutiliser indéfiniment le même Drive fige donc ce choix : si le poste
+		/// était derrière la voiture au moment de la création, elle y va en marche arrière pour
+		/// toujours — et arrive dans le mauvais sens.</para>
+		/// </summary>
+		private void BuildDrive(Car car)
+		{
+			_drive = new Drive(car, Target, Car.MaxSpeed, allowDodges: true, wasteBoost: false);
+			_driveBuiltFor = Target;
+		}
+
 		/// <summary>Rejoindre le poste à une vitesse dont on peut encore s'arrêter dessus.</summary>
 		private void Approach(RUBot bot, float distance)
 		{
+			if (Target.Dist(_driveBuiltFor) > DriveRetargetDistance)
+				BuildDrive(bot.Me);
+
 			// v² = 2·a·d : la vitesse maximale depuis laquelle il reste de quoi freiner.
 			float braking = MathF.Sqrt(2f * Car.BrakeAccel * MathF.Max(distance - HoldRadius, 0f)) * BrakeSafety;
 
@@ -113,32 +158,61 @@ namespace RedUtils
 			Interruptible = _drive.Interruptible;
 		}
 
-		/// <summary>Rester sur place, nez vers la balle.</summary>
+		/// <summary>
+		/// Rester sur place, nez vers la balle.
+		///
+		/// <para><b>Petit écart de cap</b> → arc vers l'avant : il faut de la vitesse pour tourner,
+		/// et sur moins d'un radian l'arc reste dans la bande de tenue.</para>
+		///
+		/// <para><b>Grand écart</b> → demi-tour <b>en marche arrière</b>. Un demi-tour vers l'avant
+		/// coûterait 300 à 500 uu de terrain dans une direction qu'on ne choisit pas ; en reculant,
+		/// on tourne en revenant vers l'endroit d'où l'on vient. En marche arrière le nez part du
+		/// côté <b>opposé</b> au braquage (le taux de lacet change de signe avec la vitesse), donc
+		/// le braquage est inversé — c'est le <c>steer * throttle</c> de Noob Black
+		/// (bot.py:637-638). On ne recule que s'il reste de la place devant notre ligne de but.</para>
+		/// </summary>
 		private void Hold(RUBot bot)
 		{
 			Interruptible = true;
+			bot.Controller.Boost = false;
 
-			// AimAt règle Steer/Yaw/Pitch/Roll et renvoie les angles ; [1] est l'écart de cap.
+			// AimAt règle Steer/Yaw/Pitch/Roll pour la marche AVANT et renvoie les angles.
+			// [1] est l'écart de cap, signé (Atan2) — contrairement à Vec3.FlatAngle, qui est un
+			// Acos et ne donnerait pas le sens de rotation.
 			float yaw = bot.AimAt(FacePoint)[1];
 			float forwardSpeed = bot.Me.Velocity.Dot(bot.Me.Forward);
 
-			if (MathF.Abs(yaw) > AlignedAngle)
+			if (MathF.Abs(yaw) <= AlignedAngle)
 			{
-				// Pivot : une voiture à l'arrêt ne tourne pas, il faut un peu d'élan. Si on dérive
-				// au-delà de ReleaseRadius, l'approche reprend la main et nous ramène.
-				bot.Controller.Throttle = PivotThrottle;
-				bot.Controller.Handbrake = MathF.Abs(yaw) > HandbrakeAngle
-					&& bot.Me.Velocity.FlatLen() > HandbrakeSpeed;
+				// Aligné : on annule la vitesse résiduelle et on se fige.
+				_turnSign = 0;
+				bot.Controller.Steer = 0f;
+				bot.Controller.Throttle = Utils.Cap(-forwardSpeed / StopSpeedGain, -1f, 1f);
+				bot.Controller.Handbrake = false;
+				return;
+			}
+
+			if (_turnSign == 0)
+				_turnSign = yaw >= 0f ? 1 : -1;
+
+			// Où finirions-nous en reculant ? Il ne faut pas que le demi-tour nous mette dans le but.
+			Vec3 behind = bot.Me.Location - bot.Me.Forward.FlatNorm() * ReverseRoom;
+			bool roomBehind = MathF.Abs(behind.y) < Field.Length / 2f - GoalLineMargin;
+
+			if (MathF.Abs(yaw) > ForwardPivotMax && roomBehind)
+			{
+				bot.Controller.Throttle = -1f;
+				bot.Controller.Steer = -_turnSign;
+				bot.Controller.Handbrake = false;
 			}
 			else
 			{
-				// Aligné : on annule la vitesse résiduelle et on se fige.
-				bot.Controller.Throttle = Utils.Cap(-forwardSpeed / StopSpeedGain, -1f, 1f);
-				bot.Controller.Steer = 0f;
+				bot.Controller.Throttle = PivotThrottle;
+				bot.Controller.Steer = _turnSign;
+				// Le frein à main ne fait tourner que s'il y a de la vitesse ; à l'arrêt il
+				// empêcherait au contraire la voiture de pivoter.
+				bot.Controller.Handbrake = bot.Me.Velocity.FlatLen() > HandbrakeSpeed;
 			}
-
-			// Jamais de boost pour tenir un poste.
-			bot.Controller.Boost = false;
 		}
 	}
 }

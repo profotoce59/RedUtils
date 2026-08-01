@@ -1,4 +1,5 @@
 using System;
+using System.Drawing;
 using RedUtils.Math;
 
 namespace RedUtils
@@ -42,6 +43,9 @@ namespace RedUtils
 		private Drive _drive;
 		private Vec3 _driveBuiltFor;
 		private bool _holding;
+		/// <summary>Vrai quand on aborde le poste directement (bien aligné) ; faux tant qu'on rejoint
+		/// d'abord le point de staging pour se présenter face à la balle.</summary>
+		private bool _staged;
 
 		/// <summary>
 		/// Sens de rotation retenu pour le pivot en cours. 0 = aucun pivot.
@@ -84,6 +88,16 @@ namespace RedUtils
 		private const float StopSpeedGain = 200f;
 		/// <summary>Dérive de cible au-delà de laquelle le Drive interne est reconstruit.</summary>
 		private const float DriveRetargetDistance = 800f;
+		/// <summary>Recul du point de staging derrière le poste (côté opposé à la balle). On aborde le
+		/// poste depuis là, en roulant VERS la balle, pour arriver nez dans le bon sens. Gardé sous
+		/// <see cref="DriveRetargetDistance"/> pour que le passage staging→poste ne reconstruise pas le Drive.</summary>
+		private const float StageOffset = 700f;
+		/// <summary>Écart de cap (rad) sous lequel rouler DROIT au poste nous ferait déjà arriver face à
+		/// la balle : plus besoin de staging, on file au poste.</summary>
+		private const float LineUpEnter = 0.6f;
+		/// <summary>Hystérésis : au-delà de cet écart (ex. la balle a basculé de côté) on repasse par le
+		/// staging plutôt que d'arriver de travers.</summary>
+		private const float LineUpExit = 1.2f;
 
 		public Cover(Car car, Vec3 target, Vec3 facePoint)
 		{
@@ -105,25 +119,60 @@ namespace RedUtils
 			if (!bot.Me.IsGrounded)
 			{
 				Approach(bot, distance);
-				return;
 			}
-
-			if (_holding && distance > ReleaseRadius)
-			{
-				_holding = false;
-				// Le pivot a pu nous placer de l'autre côté du poste : la décision marche
-				// avant/arrière de Drive date de sa construction et n'est plus valable.
-				BuildDrive(bot.Me);
-			}
-			else if (!_holding && distance < HoldRadius)
-			{
-				_holding = true;
-			}
-
-			if (_holding)
-				Hold(bot);
 			else
-				Approach(bot, distance);
+			{
+				if (_holding && distance > ReleaseRadius)
+				{
+					_holding = false;
+					_staged = false;   // on ressort : on se re-présentera face à la balle
+					// Le pivot a pu nous placer de l'autre côté du poste : la décision marche
+					// avant/arrière de Drive date de sa construction et n'est plus valable.
+					BuildDrive(bot.Me);
+				}
+				else if (!_holding && distance < HoldRadius)
+				{
+					_holding = true;
+				}
+
+				if (_holding)
+					Hold(bot);
+				else
+					ApproachViaStaging(bot, distance);
+			}
+
+			if (Fixes.DebugCover && bot.Me.Name == "MyBot")
+				DrawDebug(bot, distance);
+		}
+
+		private float _lastDebug = -1f;
+
+		/// <summary>
+		/// Diagnostic de la tenue de poste (Fixes.DebugCover). Rendu 3D à chaque tick + log 10x/s.
+		/// Le rendu superpose le cap VOULU (nez → balle, cyan) et le cap RÉEL de la voiture (rouge) :
+		/// leur divergence EST le symptôme « pas orienté vers la balle », et l'état (APPROCHE/HOLD)
+		/// en donne la cause — en APPROCHE la voiture suit son déplacement, elle ne se tourne vers la
+		/// balle qu'une fois le poste tenu (HOLD).
+		/// </summary>
+		private void DrawDebug(RUBot bot, float distance)
+		{
+			Vec3 toFace = bot.Me.Location.FlatDirection(FacePoint);
+			Vec3 stage = StagingPoint();
+			bot.Renderer.Line3D(Target, Target + new Vec3(0f, 0f, 200f), Color.Lime);                       // le poste
+			bot.Renderer.Line3D(stage, stage + new Vec3(0f, 0f, 200f), Color.Magenta);                      // le staging
+			bot.Renderer.Line3D(bot.Me.Location, bot.Me.Location + toFace * 300f, Color.Cyan);               // cap voulu
+			bot.Renderer.Line3D(bot.Me.Location, bot.Me.Location + bot.Me.Forward.FlatNorm() * 300f, Color.Red); // cap réel
+
+			if (Game.Time - _lastDebug < 0.1f)
+				return;
+			_lastDebug = Game.Time;
+
+			bool drifting = _drive != null && _drive.Action is FastDrift;
+			string state = drifting ? "DRIFT" : !bot.Me.IsGrounded ? "AIR" : _holding ? "HOLD" : _staged ? "APPROCHE" : "STAGING";
+			float capErr = bot.Me.Forward.FlatAngle(toFace) * 180f / MathF.PI;
+			Console.WriteLine($"[{Game.Time:F1}s][Cover] {state} distPoste={distance:F0} capErr={capErr:F0}° " +
+				$"turnSign={_turnSign} v={bot.Me.Velocity.FlatLen():F0} " +
+				$"thr={bot.Controller.Throttle:F1} steer={bot.Controller.Steer:F1} hb={bot.Controller.Handbrake}");
 		}
 
 		/// <summary>
@@ -141,17 +190,92 @@ namespace RedUtils
 			_driveBuiltFor = Target;
 		}
 
+		/// <summary>
+		/// Rejoindre le poste en se présentant FACE à la balle. Si rouler droit au poste nous y ferait
+		/// déjà arriver nez vers la balle (écart de cap &lt; <see cref="LineUpEnter"/>), on y va
+		/// directement. Sinon on passe d'abord par un point de staging du côté opposé à la balle
+		/// (<see cref="StagingPoint"/>) : le dernier tronçon staging→poste pointe alors vers la balle,
+		/// donc on arrive dans le bon sens au lieu de devoir faire demi-tour sur place.
+		///
+		/// <para>Hystérésis (<see cref="LineUpExit"/>) pour ne pas osciller entre les deux, et pour
+		/// re-passer par le staging si la balle bascule franchement de côté pendant l'approche.</para>
+		/// </summary>
+		private void ApproachViaStaging(RUBot bot, float distanceToPost)
+		{
+			Vec3 approachDir = bot.Me.Location.FlatDirection(Target);   // là où l'on irait, droit au poste
+			Vec3 faceDir = Target.FlatDirection(FacePoint);            // là où l'on veut regarder au poste
+			float lineUp = approachDir.FlatAngle(faceDir);
+
+			if (!_staged && lineUp < LineUpEnter)
+				_staged = true;
+			else if (_staged && lineUp > LineUpExit)
+				_staged = false;
+
+			if (_staged)
+			{
+				// Aligné : on file au poste, en freinant pour s'y arrêter.
+				Approach(bot, distanceToPost);
+			}
+			else
+			{
+				// Pas aligné : rejoindre d'abord le staging, sans freiner (on veut le TRAVERSER en
+				// roulant vers la balle, pas s'y arrêter — le basculement _staged se fera en chemin).
+				Vec3 stage = StagingPoint();
+				// Arriver au staging déjà orienté vers le poste (= vers la balle), en driftant au besoin.
+				DriveTo(bot, stage, bot.Me.Location.FlatDist(stage), brake: false, exitDirection: stage.FlatDirection(Target));
+			}
+		}
+
+		/// <summary>
+		/// Point d'où aborder le poste en roulant vers la balle : le poste décalé de
+		/// <see cref="StageOffset"/> du côté OPPOSÉ à la balle. Le tronçon staging→poste pointe donc
+		/// vers la balle. Jamais derrière la ligne de but (on garde <see cref="GoalLineMargin"/> devant).
+		/// </summary>
+		private Vec3 StagingPoint()
+		{
+			Vec3 awayFromBall = (Target - FacePoint).FlatNorm();
+			Vec3 stage = Target + awayFromBall * StageOffset;
+			float limit = Field.Length / 2f - GoalLineMargin;
+			stage.y = Utils.Cap(stage.y, -limit, limit);
+			stage.z = 0f;
+			return stage;
+		}
+
 		/// <summary>Rejoindre le poste à une vitesse dont on peut encore s'arrêter dessus.</summary>
 		private void Approach(RUBot bot, float distance)
 		{
-			if (Target.Dist(_driveBuiltFor) > DriveRetargetDistance)
-				BuildDrive(bot.Me);
+			// Aborder le poste en visant à l'arrivée le nez vers la balle (drift anticipé si l'angle est trop grand).
+			DriveTo(bot, Target, distance, brake: true, exitDirection: Target.FlatDirection(FacePoint));
+		}
 
-			// v² = 2·a·d : la vitesse maximale depuis laquelle il reste de quoi freiner.
-			float braking = MathF.Sqrt(2f * Car.BrakeAccel * MathF.Max(distance - HoldRadius, 0f)) * BrakeSafety;
+		/// <summary>
+		/// Conduit le Drive interne vers un point. <paramref name="brake"/> plafonne la vitesse par la
+		/// distance de freinage (<c>v² = 2·a·d</c>) pour s'ARRÊTER dessus (approche du poste) ; sans
+		/// frein on file à vitesse pleine (traversée du staging). Le Drive est reconstruit si le point
+		/// dérive de plus de <see cref="DriveRetargetDistance"/> — sinon on mute juste sa cible, pour ne
+		/// pas remettre son <c>timeOnGround</c> à zéro (ce qui interdirait dodges/wavedashes).
+		/// </summary>
+		private void DriveTo(RUBot bot, Vec3 point, float distance, bool brake, Vec3 exitDirection)
+		{
+			if (point.Dist(_driveBuiltFor) > DriveRetargetDistance)
+			{
+				_drive = new Drive(bot.Me, point, Car.MaxSpeed, allowDodges: true, wasteBoost: false, exitDirection: exitDirection);
+				_driveBuiltFor = point;
+			}
 
-			_drive.Target = Target;
-			_drive.TargetSpeed = MathF.Min(Car.MaxSpeed, braking);
+			float speed = Car.MaxSpeed;
+			if (brake)
+			{
+				// v² = 2·a·d : la vitesse maximale depuis laquelle il reste de quoi freiner.
+				float braking = MathF.Sqrt(2f * Car.BrakeAccel * MathF.Max(distance - HoldRadius, 0f)) * BrakeSafety;
+				speed = MathF.Min(Car.MaxSpeed, braking);
+			}
+
+			_drive.Target = point;
+			// Direction du nez voulue À L'ARRIVÉE : Drive s'en sert pour s'aligner (line-up leg) ou,
+			// si l'angle est trop grand, enclencher un fast-drift anticipé (voir Drive/FastDrift.ShouldStart).
+			_drive.ExitDirection = exitDirection;
+			_drive.TargetSpeed = speed;
 			_drive.AllowDodges = distance > DodgeMinDistance;
 			_drive.Run(bot);
 

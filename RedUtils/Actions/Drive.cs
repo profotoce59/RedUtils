@@ -22,6 +22,10 @@ namespace RedUtils
 		public bool AllowDodges;
 		/// <summary>Whether or not we are going to use any amount of boost neccesary to mantain our target speed</summary>
 		public bool WasteBoost;
+		/// <summary>Direction souhaitée du nez à l'ARRIVÉE (placement précis). Zéro = aucune contrainte
+		/// (Drive classique). Angle faible → on décale la cible pour s'aligner (line-up leg, comme
+		/// Arrive mais sans contrainte de temps) ; angle élevé → FastDrift anticipé (FastDrift.ShouldStart).</summary>
+		public Vec3 ExitDirection;
 		/// <summary>This action's subaction, which could be a dodge, halfflip, speedflip, etc</summary>
 		public IAction Action;
 
@@ -41,13 +45,15 @@ namespace RedUtils
 		/// <param name="targetSpeed">The speed we intend to mantain while driving</param>
 		/// <param name="allowDodges">Whether or not we are going to allow dodges to increase speed</param>
 		/// <param name="wasteBoost">>Whether or not we are going to use any amount of boost neccesary to mantain our target speed</param>
-		public Drive(Car car, Vec3 target, float targetSpeed = Car.MaxSpeed, bool allowDodges = true, bool wasteBoost = false)
+		/// <param name="exitDirection">Direction du nez souhaitée à l'arrivée (placement précis). Null = aucune contrainte.</param>
+		public Drive(Car car, Vec3 target, float targetSpeed = Car.MaxSpeed, bool allowDodges = true, bool wasteBoost = false, Vec3? exitDirection = null)
 		{
 			Interruptible = true;
 			Finished = false;
 
 			Target = target;
 			TargetSpeed = targetSpeed;
+			ExitDirection = exitDirection ?? Vec3.Zero;
 
 			float forwardsEta = GetEta(car, target, false, false);
 			float backwardsEta = GetEta(car, target, true, false);
@@ -69,6 +75,15 @@ namespace RedUtils
 			// Finds the nearest surface to the target for some calculations later
 			Surface targetSurface = Field.NearestSurface(Target);
 
+			// Placement précis avec direction de sortie : si l'écart de cap est trop grand pour un
+			// virage normal, on anticipe un fast-drift. FastDrift détient le savoir « maintenant ou
+			// plus tard » ; Drive se contente de poser la question et de lancer la manœuvre.
+			if (Action == null && ExitDirection.Length() > 0
+				&& FastDrift.ShouldStart(bot.Me, ExitDirection, bot.Me.Location.FlatDist(Target)))
+			{
+				Action = new FastDrift(ExitDirection);
+			}
+
 			// When no subaction is set, drive normally and look for a subaction
 			if (Action == null)
 			{
@@ -83,8 +98,12 @@ namespace RedUtils
 				float carSpeed = bot.Me.Velocity.Length();
 				float forwardSpeed = bot.Me.Velocity.Dot(bot.Me.Forward);
 
-				// Limits the final target to the nearest surface
-				Vec3 finalTarget = Field.LimitToNearestSurface(Target);
+				// Limits the final target to the nearest surface. Avec une direction de sortie et un
+				// angle MODÉRÉ, on décale la cible en arrière le long d'ExitDirection (line-up leg) pour
+				// que le dernier tronçon soit aligné. Les angles trop grands sont déjà partis en FastDrift.
+				Vec3 finalTarget = ExitDirection.Length() > 0
+					? LineUpTarget(bot.Me)
+					: Field.LimitToNearestSurface(Target);
 				// If we are on a differently orientated surface
 				if (mySurface.Normal.Dot(targetSurface.Normal) < 0.95f)
 				{
@@ -233,6 +252,31 @@ namespace RedUtils
 				// If we have arrived at our destination, finish this action
 				Finished = true;
 			}
+		}
+
+		/// <summary>
+		/// Décale la cible en arrière le long de <see cref="ExitDirection"/> pour aborder le point aligné
+		/// sur cette direction — le « line-up leg » d'Arrive, sans la contrainte de temps (placement pur).
+		/// Le décalage croît avec la vitesse mais est plafonné par le rayon de virage, et clampé pour ne
+		/// jamais passer de l'autre côté de la cible. Renvoie le point (limité à la surface la plus proche).
+		/// </summary>
+		private Vec3 LineUpTarget(Car car)
+		{
+			float carSpeed = car.Velocity.Length();
+			Vec3 surfaceNormal = Field.NearestSurface(Target).Normal;
+			Vec3 directionToTarget = car.Location.FlatDirection(Target, surfaceNormal);
+
+			// Longueur du tronçon d'alignement : borné par une fraction du trajet et par une durée,
+			// puis atténué quand il dépasse le rayon de virage (on ne peut pas s'aligner plus vite que ça).
+			float shift = MathF.Min(Field.DistanceBetweenPoints(Target, car.Location) * ApproachLineUpFraction,
+				Utils.Cap(carSpeed, Car.MaxThrottleSpeed, Car.MaxSpeed) * ApproachLineUpSeconds);
+			float turnRadius = TurnRadius(Utils.Cap(carSpeed, 500, Car.MaxSpeed)) * 1.2f;
+			shift *= Utils.Cap(shift / turnRadius, 0f, 1f);
+
+			// Clampe le décalage pour qu'il ne bascule pas de l'autre côté de la cible par rapport à nous.
+			Vec3 leftDirection = directionToTarget.Cross(surfaceNormal).Normalize();
+			Vec3 rightDirection = directionToTarget.Cross(-surfaceNormal).Normalize();
+			return Field.LimitToNearestSurface(Target - ExitDirection.Clamp(leftDirection, rightDirection, surfaceNormal).Normalize() * shift);
 		}
 
 		/// <summary>Finds the distance left to drive</summary>

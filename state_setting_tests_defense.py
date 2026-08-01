@@ -88,13 +88,141 @@ TEST_STATES = [
                 PLAYER_BLUE1: CarState(
                     physics=Physics(
                         location=Vector3(-1200, 3650, ONGROUNDHEIGHT),
-                        rotation=Rotator(pitch=0, yaw=YAW_ORANGE, roll=0),
+                        rotation=Rotator(pitch=0, yaw=5.0, roll=0),
                         velocity=Vector3(0, 1400, 0),
                     ),
                     boost_amount=50,
                 ),
                 # Second adversaire loin, hors du coup
                 PLAYER_BLUE2: parked(-3000, -4600, yaw=YAW_ORANGE),
+            },
+        ),
+    ),
+    (
+        # COVER + FAST-DRIFT — MyBot (ORANGE1) revient couvrir le 2e poteau mais arrive NEZ vers le
+        # terrain : le poste (~(640,4816)) est DERRIÈRE lui. Avec de la VITESSE, il doit faire un
+        # demi-tour au frein a main (FastDrift) au lieu de reculer.
+        # Roles : BLUE1 porte la balle deep a gauche (adversaire), ORANGE2 tient le 1er poteau (cote
+        # balle) donc il est le plus proche = Attacker -> MyBot = Support -> Cover. MyBot a 100 de
+        # boost pour eviter tout detour de boost (Cover pur).
+        # A observer (Fixes.DebugCover, console [Cover]) : etat DRIFT puis STAGING/APPROCHE, capErr
+        # qui chute vers ~0 ; en 3D, le rouge (cap reel) pivote vers le cyan (cap voulu) sans reculer.
+        "Cover+FastDrift — retour dos au poste, VITESSE (doit fast-drift)",
+        GameState(
+            ball=BallState(physics=Physics(
+                location=Vector3(-3000, 1200, 93),
+                velocity=Vector3(0, 200, 0),
+                )),
+            cars={
+                PLAYER_ORANGE1: CarState(
+                    physics=Physics(
+                        location=Vector3(1000, 3400, ONGROUNDHEIGHT),
+                        rotation=Rotator(pitch=0, yaw=1, roll=0),   # nez -y, dos au poste
+                        velocity=Vector3(0, 1400, 0),                     # lance vite dans le mauvais sens
+                    ),
+                    boost_amount=100,
+                ),
+                PLAYER_ORANGE2: CarState(   # 1er poteau, cote balle -> Attacker
+                    physics=Physics(
+                        location=Vector3(-1500, 3950, ONGROUNDHEIGHT),
+                        rotation=Rotator(pitch=0, yaw=YAW_BLUE, roll=0),
+                        velocity=Vector3(0, 0, 0),
+                    ),
+                    boost_amount=50,
+                ),
+                PLAYER_BLUE1: CarState(     # adversaire qui porte la balle
+                    physics=Physics(
+                        location=Vector3(-3500, 1000, ONGROUNDHEIGHT),
+                        rotation=Rotator(pitch=0, yaw=YAW_ORANGE, roll=0),
+                        velocity=Vector3(0, 400, 0),
+                    ),
+                    boost_amount=50,
+                ),
+                PLAYER_BLUE2: parked(2000, -3000, yaw=YAW_ORANGE),
+            },
+        ),
+    ),
+    (
+            # COVER + FAST-DRIFT — MyBot (ORANGE1) revient couvrir le 2e poteau mais arrive NEZ vers le
+            # terrain : le poste (~(640,4816)) est DERRIÈRE lui. Avec de la VITESSE, il doit faire un
+            # demi-tour au frein a main (FastDrift) au lieu de reculer.
+            # Roles : BLUE1 porte la balle deep a gauche (adversaire), ORANGE2 tient le 1er poteau (cote
+            # balle) donc il est le plus proche = Attacker -> MyBot = Support -> Cover. MyBot a 100 de
+            # boost pour eviter tout detour de boost (Cover pur).
+            # A observer (Fixes.DebugCover, console [Cover]) : etat DRIFT puis STAGING/APPROCHE, capErr
+            # qui chute vers ~0 ; en 3D, le rouge (cap reel) pivote vers le cyan (cap voulu) sans reculer.
+            "Cover+FastDrift — retour dos au poste, VITESSE (doit fast-drift) bug rotation priority",
+            GameState(
+                ball=BallState(physics=Physics(
+                    location=Vector3(-3000, 1200, 93),
+                    velocity=Vector3(0, 200, 0),
+                    )),
+                cars={
+                    PLAYER_ORANGE1: CarState(
+                        physics=Physics(
+                            location=Vector3(300, 3800, ONGROUNDHEIGHT),
+                            rotation=Rotator(pitch=0, yaw=YAW_ORANGE, roll=0),   # nez -y, dos au poste
+                            velocity=Vector3(0, 1400, 0),                     # lance vite dans le mauvais sens
+                        ),
+                        boost_amount=100,
+                    ),
+                    PLAYER_ORANGE2: CarState(   # 1er poteau, cote balle -> Attacker
+                        physics=Physics(
+                            location=Vector3(-850, 4950, ONGROUNDHEIGHT),
+                            rotation=Rotator(pitch=0, yaw=YAW_BLUE, roll=0),
+                            velocity=Vector3(0, 0, 0),
+                        ),
+                        boost_amount=50,
+                    ),
+                    PLAYER_BLUE1: CarState(     # adversaire qui porte la balle
+                        physics=Physics(
+                            location=Vector3(-3500, 1000, ONGROUNDHEIGHT),
+                            rotation=Rotator(pitch=0, yaw=YAW_ORANGE, roll=0),
+                            velocity=Vector3(0, 400, 0),
+                        ),
+                        boost_amount=50,
+                    ),
+                    PLAYER_BLUE2: parked(2000, -3000, yaw=YAW_ORANGE),
+                },
+            ),
+        ),
+    (
+        # Meme geometrie, mais MyBot QUASI A L'ARRET (peu de vitesse) : le fast-drift ne peut PAS se
+        # declencher (precondition vitesse > 600 non remplie). On observe alors comment le bot se
+        # retourne sans drift (virage normal / marche arriere) -> c'est le cas ou le drift n'aide pas.
+        # A observer : etat qui NE passe PAS par DRIFT ; le bot recule ou fait un demi-tour lent.
+        "Cover+FastDrift — retour dos au poste, LENT (pas de fast-drift)",
+        GameState(
+            ball=BallState(physics=Physics(
+                location=Vector3(-1500, 4200, 93),
+                velocity=Vector3(0, 200, 0),
+                )),
+            cars={
+                PLAYER_ORANGE1: CarState(
+                    physics=Physics(
+                        location=Vector3(300, 3800, ONGROUNDHEIGHT),
+                        rotation=Rotator(pitch=0, yaw=YAW_BLUE, roll=0),
+                        velocity=Vector3(0, -100, 0),                      # quasi a l'arret
+                    ),
+                    boost_amount=100,
+                ),
+                PLAYER_ORANGE2: CarState(
+                    physics=Physics(
+                        location=Vector3(-850, 4950, ONGROUNDHEIGHT),
+                        rotation=Rotator(pitch=0, yaw=YAW_BLUE, roll=0),
+                        velocity=Vector3(0, 0, 0),
+                    ),
+                    boost_amount=50,
+                ),
+                PLAYER_BLUE1: CarState(
+                    physics=Physics(
+                        location=Vector3(-1600, 3900, ONGROUNDHEIGHT),
+                        rotation=Rotator(pitch=0, yaw=YAW_ORANGE, roll=0),
+                        velocity=Vector3(0, 400, 0),
+                    ),
+                    boost_amount=50,
+                ),
+                PLAYER_BLUE2: parked(2000, -3000, yaw=YAW_ORANGE),
             },
         ),
     ),

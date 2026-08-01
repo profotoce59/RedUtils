@@ -605,8 +605,8 @@ namespace Bot
                     // Ils ont la balle DANS NOTRE MOITIÉ : le Support est le dernier homme, il couvre
                     // le but — boost ou pas. Balle dans leur moitié : pas de danger immédiat, il monte
                     // en soutien (BackupPosition, plus bas) au lieu d'abandonner le terrain.
-                    if (gameState == GameStateMode.NotPossessed
-                        && (!Fixes.OffensivePressing || fieldZone == FieldZone.Defensive))
+                    if ((gameState == GameStateMode.NotPossessed || gameState == GameStateMode.Contested)
+                        && (fieldZone == FieldZone.Defensive))
                     {
                         // Dernier homme : on TIENT le poste (arrêt + nez vers la balle) au lieu de
                         // le traverser à pleine vitesse, en ramassant un pad s'il est sur la route.

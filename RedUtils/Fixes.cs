@@ -121,6 +121,15 @@ namespace RedUtils
 		/// CoverPostRamp</c>, et les constantes de <c>Cover.cs</c>.</para></summary>
 		public static bool GoalieCover = true;
 
+		/// <summary>DEBUG — Trace l'action <see cref="Cover"/> (10x/s + rendu 3D), pour MyBot.
+		/// <para>Console : état APPROCHE / HOLD / AIR, distance au POSTE (pas à la balle), écart de cap
+		/// vers la balle en degrés, sens de pivot, vitesse et commandes (throttle/steer/frein à main).
+		/// Rendu : ligne verte = le poste ; ligne cyan = le cap VOULU (nez → balle) ; ligne rouge = le
+		/// cap RÉEL de la voiture. Si cyan et rouge divergent, la voiture ne fait pas face à la balle —
+		/// et l'état dit pourquoi (en APPROCHE elle regarde son déplacement, pas la balle).</para>
+		/// <para>À remettre à false une fois le diagnostic terminé.</para></summary>
+		public static bool DebugCover = true;
+
 		/// <summary>DEBUG — Banc d'étalonnage de l'ETA à vitesse maximale.
 		/// <para>Quand ce flag est vrai, le bot ABANDONNE toute stratégie : il roule à fond (boost
 		/// autorisé) vers la position de la balle, et imprime l'ETA prédit puis le temps réellement

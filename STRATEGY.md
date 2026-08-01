@@ -10,7 +10,7 @@
 |-----|-------------|
 | `Drive(Balle)` | Conduite vers la balle |
 | `Arrive(BackupPosition)` | Arrivée face à la balle sur la position de soutien (2500u goal-side de la balle, décalée back post) |
-| `Arrive(DefensivePosition)` | Arrivée face à la balle sur le point à 20% entre notre but et la balle (couverture dernier homme) |
+| `Cover(DefensivePosition)` | Tenue de poste du dernier homme (`Fixes.GoalieCover`) : rejoint le poste **en se présentant face à la balle** (staging du côté opposé à la balle → arrive nez dans le bon sens), s'y arrête et pivote pour garder le nez sur la balle. Sans le flag : ancien `Arrive(DefensivePosition)` (20% but→balle) |
 | `Drive(ShadowPosition)` | Conduite vers le point à 60% entre notre but et la balle — le bot fait face à la balle |
 | `Drive(Pressing)` | Conduite vers le point à 1100u goal-side de la balle — vient presser le porteur adverse |
 | `Drive(Contest)` | Conduite vers le point à 500u goal-side de la balle — l'Attacker challenge le porteur en défense (2v2, Support couvre) |
@@ -22,6 +22,7 @@
 | `GetBoost` | Va chercher le meilleur gros boost disponible |
 | `Kickoff` | Speedflip vers la balle au kickoff |
 | `Dodge(Balle)` | Dodge en direction de la balle (50/50) |
+| `FastDrift(direction)` | Demi-tour rapide au frein à main vers une orientation cible : braquage plein + frein à main, sans throttle ni boost, jusqu'à l'alignement. Non-interruptible. Précondition : de la vitesse. Expose `ShouldStart`/`SlideDistance` : `Drive` s'en sert pour **anticiper** le drift quand une direction de sortie (`ExitDirection`) est demandée et que l'angle d'arrivée est trop grand pour un simple virage |
 
 ---
 
@@ -118,12 +119,13 @@ imposait une cible choisie à froid, qui peut flip-flop d'un tick à l'autre sur
 
 ### Attribution des rôles (`ComputeRole`)
 Score = ETA vers la balle + pénalité de 2s si l'angle car→balle→leur but dépasse 108°. Score le plus bas = Attacker.
+- **Contrainte goal-side (prime sur le score)** : si **exactement un** des deux est goal-side, c'est **lui** l'Attacker, quel que soit l'ETA ; si les deux le sont (ou aucun), on retombe sur le score. « goal-side » = **pas clairement passé la balle** : le joueur qui aborde la balle par l'arrière le reste jusqu'au contact (profondeur ~0), tandis que celui qui la **dépasse ou la rate** (elle repart vers notre but, il se retrouve `GoalSideMargin` = 200u au-delà) devient ball-side et **passe Support**, le coéquipier resté goal-side reprenant l'attaque. Aucun court-circuit « déjà engagé » : rater la balle DOIT faire passer Support. Test symétrique → les deux bots s'accordent sans état partagé.
 - **Sur la balle → Attacker par proximité** : une voiture à moins de `OnBallDistance` (600u) de la balle reçoit un score minuscule (`distance / MaxSpeed`), qui court-circuite l'ETA. Sinon, pour une voiture **en l'air** (Fifty engagé), `Movement.EtaFor` gonfle à plusieurs secondes → elle passerait Support et le coéquipier viendrait **doubler sur la balle**. Le calcul est symétrique (les deux bots évaluent les deux voitures pareil), donc ils restent d'accord sans état partagé. Même parade que `ContestDistance` dans `ComputeGameState`.
 - **Départage d'égalité** : à score strictement égal (kickoff symétrique), l'index le plus bas est Attacker — sinon les deux bots se croient Attacker.
 - **Hystérésis (0.3s)** : le titulaire garde son rôle tant que l'autre ne le bat pas de 0.3s. Les deux conditions sont complémentaires, donc les deux bots restent d'accord sans état partagé.
 
 ### SUPPORT _(coéquipier présent et mon score de rôle > celui du coéquipier)_
-- État `NOT POSSESSED` **en zone défensive** _(ils ont la balle dans notre moitié)_ → `Arrive(DefensivePosition)` face à la balle — dernier homme, il couvre le but **boost ou pas**
+- État `NOT POSSESSED` **en zone défensive** _(ils ont la balle dans notre moitié)_ → `Cover(DefensivePosition)` — dernier homme, il couvre le but **boost ou pas**. Le `Cover` aborde le poste **via un point de staging** (côté opposé à la balle) : rouler droit au poste depuis n'importe où le ferait arriver **dos à la balle** et pivoter sur place (que la tenue gère mal) ; en passant par le staging, le dernier tronçon pointe vers la balle et il arrive **nez dans le bon sens**. Bascule directe (sans staging) si l'axe voiture→poste est déjà aligné avec poste→balle (`LineUpEnter`), avec hystérésis (`LineUpExit`) si la balle bascule de côté. Chaque tronçon (→ staging, puis → poste) est un `Drive` avec **direction de sortie** (`ExitDirection`) : Drive s'aligne en courbant sa trajectoire (line-up leg) ou, **si l'angle d'arrivée est trop grand**, enclenche un **fast-drift anticipé** (`FastDrift.ShouldStart`, calé pour finir la glisse au point). Le drift vit désormais dans `Drive`, plus dans `Cover`
   - En zone **offensive**, pas de repli : le Support monte en soutien (`Arrive(BackupPosition)` ci-dessous) pour servir de relais au pressing au lieu d'abandonner le terrain
 - Collecte de boost _(hystérésis : entre si boost < 30, sort à ≥ 60)_ → `GetBoost` limité aux **gros pads goal-side de la balle** ; s'il n'y en a aucun, on se replace sans boost plutôt que de traverser le terrain
 - Sinon → `Arrive(BackupPosition)` face à la balle

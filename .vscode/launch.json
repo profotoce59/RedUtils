@@ -40,7 +40,7 @@
             "name": "Run state_setting_tests_attack.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/state_setting_tests_attack.py",
+            "program": "${workspaceFolder}/state_setting_tests_defense.py",
             "python": "${workspaceFolder}/.venv/Scripts/python.exe",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"

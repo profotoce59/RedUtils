@@ -46,10 +46,10 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "name": "Run state_setting_tests_wavedash.py",
+            "name": "Run state_setting_tests_rotation.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/state_setting_tests_wavedash.py",
+            "program": "${workspaceFolder}/state_setting_tests_rotation.py",
             "python": "${workspaceFolder}/.venv/Scripts/python.exe",
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}"

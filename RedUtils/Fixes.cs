@@ -141,6 +141,18 @@ namespace RedUtils
 		/// imprime une ligne [BENCH].</para></summary>
 		public static bool EtaBench = false;
 
+		/// <summary>DEBUG — Banc de mesure de la ROTATION (une seule action, isolée).
+		/// <para>Quand ce flag est vrai, le bot ABANDONNE toute stratégie : il ne joue PAS la balle,
+		/// il exécute juste une <see cref="Rotate"/> depuis la pose imposée par le state setter, et
+		/// imprime le profil de vitesse du trajet.</para>
+		/// <para>La question mesurée est « garde-t-on la vitesse ? » : lire <c>vMin</c> (vitesse la
+		/// plus basse) et <c>tempsLent</c> (temps sous 1000 uu/s). Si la vitesse casse dans l'arc,
+		/// baisser <c>ArcMaxAngle</c> dans Rotate.cs pour élargir la trajectoire.</para>
+		/// <para>La balle sert seulement de marqueur : la destination (<c>DefensivePosition</c>) en
+		/// dépend, elle est lue UNE fois au départ puis figée. Utilisation : mettre à true,
+		/// recompiler, lancer un match 4 voitures, puis dérouler state_setting_tests_rotation.py.</para></summary>
+		public static bool RotationBench = false;
+
 		/// <summary>DEBUG — Banc de mesure du Wavedash (une seule action, isolée).
 		/// <para>Quand ce flag est vrai, le bot ABANDONNE toute stratégie : depuis la pose du state
 		/// setter (vitesse initiale imposée), il déclenche UN wavedash droit devant, throttle à fond
@@ -213,6 +225,26 @@ namespace RedUtils
 		/// trop tardive, ou prédiction de balle qui dérive. Voir MyBot.TraceShot pour la lecture
 		/// des colonnes. À remettre à false une fois le diagnostic terminé.</para></summary>
 		public static bool DebugShot = true;
+
+		/// <summary>Feature — Sortie de rotation (action <see cref="Rotate"/>).
+		/// <para>Sans ce flag, comportement d'origine : après avoir engagé un contest ou un tir, le bot
+		/// repasse Support et se replace par <c>Arrive→BackupPos</c> / <c>Cover</c> — cible recalculée
+		/// à chaque tick depuis la balle, donc corrections de direction permanentes. Il ne tient
+		/// jamais une vitesse.</para>
+		/// <para>Avec le flag, et <b>si le coéquipier est bien replacé goal-side</b> (sinon on garde la
+		/// trajectoire courte classique, on est le dernier recours), on sort en rotation : tout droit
+		/// d'abord, puis un gros pad du côté OPPOSÉ au contest s'il s'aborde à moins de 45°, en y
+		/// arrivant orienté vers l'extérieur/notre but, puis un arc de cercle vers le replacement.
+		/// La trajectoire est décidée UNE fois et tenue — c'est ce qui permet de garder la vitesse.</para>
+		/// <para>Réglages dans Rotate.cs : <c>ArcMaxAngle</c> (l'ouverture de l'arc, le réglage
+		/// principal), <c>PadEntryMaxAngle</c>, <c>PadExitOutward</c>, <c>ArcLookAhead</c>.</para></summary>
+		public static bool RotationMode = true;
+
+		/// <summary>DEBUG — Trace l'action <see cref="Rotate"/> (10x/s + rendu 3D), pour MyBot.
+		/// <para>Console : phase (PAD / ARC), vitesse, boost, écart de cap vers la destination, distance
+		/// restante, pad visé. Rendu : ligne orange = destination, jaune = pad. Sert à régler
+		/// <c>ArcMaxAngle</c> : si la vitesse chute dans la phase ARC, l'arc est trop serré.</para></summary>
+		public static bool DebugRotation = true;
 
 		/// <summary>Feature — Pressing offensif.
 		/// <para>Sans ce flag, comportement d'origine : en état NotPossessed les deux bots se replient

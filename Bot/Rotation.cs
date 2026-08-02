@@ -24,6 +24,17 @@ namespace Bot
         // voiture en l'air, ex. un Fifty engagé). Aligné sur MyBot.FiftyChallengeRange (600u).
         private const float OnBallDistance = 600f;
 
+        // Tolérance (uu) : un joueur reste « goal-side » jusqu'à GoalSideMargin PASSÉ la balle (vers
+        // les adversaires). Au-delà il est ball-side (dépassé / raté) → Support. Évite de le déclasser
+        // au contact, où il est légitimement en train de challenger la balle.
+        //
+        // Descendu de 200 à 100 : la marge doit rester SOUS la distance à laquelle le bot pousse la
+        // balle. À 200, un bot en dribble/poussée (mesuré : 166-188 uu du ballon) ne pouvait
+        // JAMAIS être vu ball-side — l'écart en y est borné par la distance totale, donc -170 > -200
+        // restait vrai quel que soit le côté où il se trouvait. Il gardait le rôle d'Attacker en
+        // poussant la balle vers notre propre but.
+        private const float GoalSideMargin = 100f;
+
         /// <summary>
         /// Determines whether this car is the attacker or the support in a 2v2.
         /// Both bots call this independently each tick and will agree without shared state:
@@ -31,6 +42,24 @@ namespace Bot
         /// </summary>
         public static Role ComputeRole(Car me, Car teammate, Goal theirGoal, Role? currentRole = null)
         {
+            // Contrainte défensive : l'Attacker doit être GOAL-SIDE (entre la balle et notre but),
+            // sauf si aucun des deux ne l'est. Ce gate PRIME sur le score.
+            //
+            // « goal-side » = pas clairement PASSÉ la balle : profondeur (position le long de y vers
+            // notre but, relative à la balle) au-dessus de -GoalSideMargin. Un joueur qui aborde la
+            // balle par l'arrière le reste jusqu'au contact (profondeur ~0) ; celui qui la DÉPASSE ou
+            // la RATE (la balle repart vers notre but → profondeur franchement négative) devient
+            // ball-side et PASSE Support, le coéquipier resté goal-side reprenant l'attaque. C'est
+            // exactement le comportement voulu, donc surtout PAS de court-circuit « déjà engagé » ici.
+            // Symétrique : les deux bots évaluent les mêmes tests sur les deux voitures → ils s'accordent.
+            bool meGoalSide = IsGoalSide(me);
+            bool teammateGoalSide = IsGoalSide(teammate);
+
+            // Exactement un des deux est goal-side → c'est lui l'Attacker, quel que soit l'ETA.
+            // Les deux le sont, ou aucun → on retombe sur la logique de score ci-dessous.
+            if (meGoalSide != teammateGoalSide)
+                return meGoalSide ? Role.Attacker : Role.Support;
+
             float myScore = ComputeScore(me, theirGoal);
             float teammateScore = ComputeScore(teammate, theirGoal);
 
@@ -48,6 +77,18 @@ namespace Bot
                 Role.Support  => myScore + RoleSwitchMargin < teammateScore  ? Role.Attacker : Role.Support,
                 _             => myScore < teammateScore                     ? Role.Attacker : Role.Support,
             };
+        }
+
+        /// <summary>
+        /// La voiture n'a-t-elle pas clairement DÉPASSÉ la balle ? Vrai tant qu'elle est du côté de
+        /// notre but, à <see cref="GoalSideMargin"/> près — donc encore vrai au contact (profondeur
+        /// ~0), faux une fois la balle ratée ou dépassée. Base du gate de <see cref="ComputeRole"/>
+        /// et du test « le coéquipier est-il replacé ? » avant une rotation.
+        /// </summary>
+        public static bool IsGoalSide(Car car)
+        {
+            int side = Field.Side(car.Team);
+            return (car.Location.y - Ball.Location.y) * side > -GoalSideMargin;
         }
 
         /// <summary>

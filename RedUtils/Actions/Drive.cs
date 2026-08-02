@@ -22,6 +22,14 @@ namespace RedUtils
 		public bool AllowDodges;
 		/// <summary>Whether or not we are going to use any amount of boost neccesary to mantain our target speed</summary>
 		public bool WasteBoost;
+		/// <summary>
+		/// Traite <see cref="Target"/> comme une cible MOLLE : ne jamais freiner pour tourner plus
+		/// serré, ni tirer le frein à main. On préfère passer large à pleine vitesse.
+		/// <para>Pour un replacement (voir <see cref="Rotate"/>) la destination est une zone, pas un
+		/// point à taper : sacrifier la vitesse pour la précision est le mauvais arbitrage. À laisser
+		/// à false pour tout ce qui doit arriver PRÉCISÉMENT quelque part (tirs, poste, pad).</para>
+		/// </summary>
+		public bool PreserveSpeed;
 		/// <summary>Direction souhaitée du nez à l'ARRIVÉE (placement précis). Zéro = aucune contrainte
 		/// (Drive classique). Angle faible → on décale la cible pour s'aligner (line-up leg, comme
 		/// Arrive mais sans contrainte de temps) ; angle élevé → FastDrift anticipé (FastDrift.ShouldStart).</summary>
@@ -137,6 +145,12 @@ namespace RedUtils
 					TimeRemaining = float.IsNaN(TimeRemaining) ? 0.01f : TimeRemaining;
 					bot.Throttle(Distance(bot.Me) / MathF.Max(TimeRemaining - landingTime, 0.01f));
 				}
+				else if (PreserveSpeed)
+				{
+					// Cible molle : on garde la vitesse et on passe large plutôt que de freiner
+					// pour taper le point (c'est la branche qui casse la vitesse en replacement).
+					bot.Throttle(TargetSpeed, Backwards);
+				}
 				else
 				{
 					// Otherwise, slow dowwn to turn sharper
@@ -160,8 +174,10 @@ namespace RedUtils
 
 				// Only boost when we are facing our target, and when we really need to
 				bot.Controller.Boost = bot.Controller.Boost && (angleToTarget < 0.3f || (angleToTarget < 0.8f && !bot.Me.IsGrounded)) && !Backwards && WasteBoost;
-				// Drift if the target is behind us, or when we need to turn really sharply
-				bot.Controller.Handbrake = (MathF.Abs(angleToTarget) > 2 || (Field.DistanceBetweenPoints(nearestTurnCenter, Target) < turnRadius - 40 && SpeedFromTurnRadius(TurnRadius(bot.Me, Target)) < 400))
+				// Drift if the target is behind us, or when we need to turn really sharply.
+				// En PreserveSpeed on ne garde que le cas « cible derrière » : le frein à main pour
+				// virage serré fait perdre la vitesse qu'on cherche justement à tenir.
+				bot.Controller.Handbrake = (MathF.Abs(angleToTarget) > 2 || (!PreserveSpeed && Field.DistanceBetweenPoints(nearestTurnCenter, Target) < turnRadius - 40 && SpeedFromTurnRadius(TurnRadius(bot.Me, Target)) < 400))
 											&& mySurface.Normal.Dot(Vec3.Up) > 0.9f && bot.Me.Velocity.Normalize().Dot(bot.Me.Forward) > 0.9f;
 
 				// Draws a debug line to represent the final target

@@ -22,6 +22,12 @@ namespace Bot
         private GameStateMode _lastState;
         private FieldZone _lastZone;
         private Role? _lastRole;
+        /// <summary>Instant où l'on a perdu le rôle d'Attacker (contest/tir joué) — une rotation est due.
+        /// -1 = rien en attente. Latché parce que la bascule ne dure qu'un tick et tombe souvent
+        /// pendant une action non-interruptible (Kickoff, Shot), où SelectAction ne décide pas.</summary>
+        private float _rotationPendingTime = -1f;
+        /// <summary>Au-delà, la bascule est trop vieille pour justifier encore une rotation.</summary>
+        private const float RotationTriggerWindow = 2f;
         private string _lastIntent;
         private string _intent;
         private float _lastLoggedTouchTime = -1f;
@@ -91,6 +97,14 @@ namespace Bot
             _wdLeftGround = false;
             _wdSettleTime = 0f;
 
+            // ... et une mesure du banc rotation. SANS ce reset, _rotBenchDone reste vrai après le
+            // premier scénario : RunRotationBench sort aussitôt, ne remet jamais Action à null, et
+            // le framework continue d'exécuter l'ANCIENNE Rotate — plan (pad, destination) calculé
+            // pour la pose précédente, alors que la voiture vient d'être téléportée ailleurs.
+            _rotBenchRunning = false;
+            _rotBenchDone = false;
+            _rotBenchAction = null;
+
             _stableState = GameStateMode.Contested;
             _pendingState = GameStateMode.Contested;
             _pendingSince = -1f;
@@ -113,7 +127,7 @@ namespace Bot
             // yaw = cap de la voiture en degrés (0 = +x, 90 = +y vers le but orange).
             if (Fixes.DebugShot)
             {
-                if(Me.Name == "MyBo")
+                if(Me.Name == "MyBot")
                 {
                     float yaw = MathF.Atan2(Me.Forward.y, Me.Forward.x) * 180f / MathF.PI;
                 Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}#{Index}] ===== STATE SET ===== " +
@@ -489,8 +503,120 @@ namespace Bot
             }
         }
 
+        // --- Banc de mesure de la ROTATION (Fixes.RotationBench) ---
+        // Seule cette voiture mesure et imprime : les 4 tournent le même bot. Filtré sur le NOM et
+        // non sur l'index, comme Rotate.Debug et le reste des traces : avec un filtre d'index, le
+        // banc mesurait une voiture GARÉE pendant que les lignes [Rotate] venaient d'une autre.
+        private const string RotationBenchCarName = "MyBot";
+        // En dessous, on considère la vitesse « cassée » — c'est ce que la rotation doit éviter.
+        private const float RotationBenchSlowSpeed = 1000f;
+        private const float RotationBenchTimeout = 12f;
+
+        private Rotate _rotBenchAction;
+        private bool _rotBenchRunning;
+        private bool _rotBenchDone;
+        private float _rotBenchStartTime;
+        private float _rotBenchStartSpeed;
+        private float _rotBenchStartBoost;
+        private Vec3 _rotBenchStartLoc;
+        private float _rotBenchMinSpeed;
+        private float _rotBenchMaxSpeed;
+        private float _rotBenchSpeedSum;
+        private int _rotBenchSamples;
+        private float _rotBenchSlowTime;
+        private float _rotBenchBoostCollected;
+        private float _rotBenchLastBoost;
+        private bool _rotBenchHadPad;
+
+        /// <summary>
+        /// Mesure UNE sortie de rotation, sans aucune stratégie : le bot ne joue pas la balle, il
+        /// exécute juste une <see cref="Rotate"/> depuis la pose imposée par le state setter.
+        ///
+        /// <para>La question à laquelle ce banc répond est <b>« garde-t-on la vitesse ? »</b> — d'où
+        /// la métrique centrale <c>vMin</c> (vitesse la plus basse du trajet) et <c>tempsLent</c>
+        /// (temps passé sous <see cref="RotationBenchSlowSpeed"/>). Si l'arc est trop serré,
+        /// <c>ArcMaxAngle</c> est à baisser et ça se voit immédiatement sur ces deux colonnes.</para>
+        ///
+        /// <para>La balle n'est PAS jouée : elle sert seulement de marqueur, puisque la destination
+        /// (<c>Rotation.DefensivePosition</c>) en dépend. Elle est lue UNE fois au départ, puis la
+        /// destination est figée — le trajet mesuré ne bouge donc plus.</para>
+        /// </summary>
+        private void RunRotationBench()
+        {
+            if (Me.Name != RotationBenchCarName || _rotBenchDone)
+                return;
+
+            if (!_rotBenchRunning)
+            {
+                Vec3 dest = Rotation.DefensivePosition(OurGoal);
+                // Même règle qu'en jeu : on tourne par le côté opposé à celui où l'on est.
+                int side = Me.Location.x >= 0f ? -1 : 1;
+
+                _rotBenchAction = new Rotate(Me, dest, side, OurGoal);
+                _rotBenchStartTime = Game.Time;
+                _rotBenchStartSpeed = Me.Velocity.FlatLen();
+                _rotBenchStartBoost = Me.Boost;
+                _rotBenchStartLoc = Me.Location;
+                _rotBenchLastBoost = Me.Boost;
+                _rotBenchMinSpeed = float.MaxValue;
+                _rotBenchMaxSpeed = 0f;
+                _rotBenchSpeedSum = 0f;
+                _rotBenchSamples = 0;
+                _rotBenchSlowTime = 0f;
+                _rotBenchBoostCollected = 0f;
+                _rotBenchHadPad = _rotBenchAction.Pad != null;
+                _rotBenchRunning = true;
+
+                string pad = _rotBenchAction.Pad == null
+                    ? "AUCUN (aucun gros pad sous 45°)"
+                    : $"({_rotBenchAction.Pad.Location.x:F0},{_rotBenchAction.Pad.Location.y:F0})";
+                Console.WriteLine($"[ROTBENCH] DEPART v0={_rotBenchStartSpeed:F0} boost0={_rotBenchStartBoost:F0} " +
+                    $"pos=({Me.Location.x:F0},{Me.Location.y:F0}) cote={(side > 0 ? "+x" : "-x")} " +
+                    $"dest=({dest.x:F0},{dest.y:F0}) pad={pad}");
+            }
+
+            // Échantillonnage : c'est la vitesse MINIMALE qui juge la rotation, pas la moyenne.
+            float v = Me.Velocity.FlatLen();
+            _rotBenchMinSpeed = MathF.Min(_rotBenchMinSpeed, v);
+            _rotBenchMaxSpeed = MathF.Max(_rotBenchMaxSpeed, v);
+            _rotBenchSpeedSum += v;
+            _rotBenchSamples++;
+            if (v < RotationBenchSlowSpeed)
+                _rotBenchSlowTime += DeltaTime;
+            if (Me.Boost > _rotBenchLastBoost)
+                _rotBenchBoostCollected += Me.Boost - _rotBenchLastBoost;
+            _rotBenchLastBoost = Me.Boost;
+
+            if (Action is not Rotate)
+                Action = _rotBenchAction;
+
+            float elapsed = Game.Time - _rotBenchStartTime;
+            bool timedOut = elapsed > RotationBenchTimeout;
+
+            if (_rotBenchAction.Finished || timedOut)
+            {
+                float avg = _rotBenchSamples > 0 ? _rotBenchSpeedSum / _rotBenchSamples : 0f;
+                float slowPct = elapsed > 0.01f ? _rotBenchSlowTime / elapsed * 100f : 0f;
+                Console.WriteLine($"[ROTBENCH] {(timedOut ? "TIMEOUT" : "FIN")} duree={elapsed:F2}s " +
+                    $"v0={_rotBenchStartSpeed:F0} vMin={_rotBenchMinSpeed:F0} vMoy={avg:F0} vMax={_rotBenchMaxSpeed:F0} " +
+                    $"vFin={Me.Velocity.FlatLen():F0} tempsLent={_rotBenchSlowTime:F2}s ({slowPct:F0}%) " +
+                    $"boostPris=+{_rotBenchBoostCollected:F0} boostFin={Me.Boost:F0} " +
+                    $"dist={_rotBenchStartLoc.FlatDist(Me.Location):F0} " +
+                    $"padVise={(_rotBenchHadPad ? "oui" : "non")} " +
+                    $"resteAFaire={Me.Location.FlatDist(_rotBenchAction.FinalTarget):F0}");
+                _rotBenchDone = true;
+                Action = null;
+            }
+        }
+
         public override void Run()
         {
+            if (Fixes.RotationBench)
+            {
+                RunRotationBench();
+                return;
+            }
+
             if (Fixes.WavedashBench)
             {
                 RunWavedashBench();
@@ -518,6 +644,16 @@ namespace Bot
             Role? role = LivingTeammates.Count == 1
                 ? Rotation.ComputeRole(Me, LivingTeammates[0], TheirGoal, _lastRole)
                 : null;
+
+            // Sortie de rotation : on vient de perdre le rôle d'Attacker, le contest/tir est joué.
+            // Détecté ICI et non dans SelectAction : la bascule ne dure qu'un tick, et elle tombe
+            // typiquement pendant une action NON-INTERRUPTIBLE (Kickoff, Shot) où SelectAction ne
+            // re-décide pas — le front serait purement et simplement perdu (mesuré : role=Support
+            // arrive pendant intent=Kickoff, et au tick suivant _lastRole vaut déjà Support).
+            if (_lastRole == Role.Attacker && role == Role.Support)
+                _rotationPendingTime = Game.Time;
+            else if (role != Role.Support)
+                _rotationPendingTime = -1f;
 
             if (DebugMode)
                 DrawDebug(gameState, role);
@@ -598,6 +734,32 @@ namespace Bot
 
                 if (role == Role.Support)
                 {
+                    // --- Sortie de rotation (Fixes.RotationMode) ---
+                    // Une Rotate en cours n'est PAS re-décidée : c'est tout son intérêt. On se contente
+                    // de suivre la destination, sinon on retombe dans le re-ciblage permanent qui
+                    // empêchait de tenir une vitesse.
+                    if (Action is Rotate running && !running.Finished)
+                    {
+                        running.FinalTarget = RotationDestination(gameState, fieldZone);
+                        return;
+                    }
+
+                    // On vient de lâcher le rôle d'Attacker : le contest/tir est joué, on sort.
+                    // Le latch (posé dans Run) survit aux actions non-interruptibles ; la fenêtre
+                    // évite de déclencher une rotation sur une bascule devenue trop ancienne.
+                    // Condition : le coéquipier est bien replacé goal-side. S'il ne l'est PAS, on est
+                    // le dernier recours — trajectoire courte, replacement classique ci-dessous.
+                    if (Fixes.RotationMode && _rotationPendingTime >= 0f
+                        && Game.Time - _rotationPendingTime < RotationTriggerWindow
+                        && LivingTeammates.Count == 1 && Rotation.IsGoalSide(LivingTeammates[0]))
+                    {
+                        _rotationPendingTime = -1f;
+                        // On tourne par le côté OPPOSÉ à celui où l'on vient de contester (= le nôtre).
+                        int rotationSide = Me.Location.x >= 0f ? -1 : 1;
+                        SetAction(new Rotate(Me, RotationDestination(gameState, fieldZone), rotationSide, OurGoal), "Rotation");
+                        return;
+                    }
+
                     // Hystérésis 30/60 : sans bande morte le Support oscille entre collecte et placement
                     if (Me.Boost < SupportBoostLow) _collectingBoost = true;
                     else if (Me.Boost >= SupportBoostHigh) _collectingBoost = false;
@@ -800,6 +962,17 @@ namespace Bot
                         break;
                 }
             }
+        }
+
+        /// <summary>
+        /// Où une rotation se termine : le même point que celui où le Support se serait placé, pour
+        /// que la fin de la rotation et le replacement classique visent la même chose.
+        /// </summary>
+        private Vec3 RotationDestination(GameStateMode gameState, FieldZone fieldZone)
+        {
+            bool lastMan = (gameState == GameStateMode.NotPossessed || gameState == GameStateMode.Contested)
+                           && fieldZone == FieldZone.Defensive;
+            return lastMan ? Rotation.DefensivePosition(OurGoal) : Rotation.BackupPosition(OurGoal);
         }
 
         /// <summary>

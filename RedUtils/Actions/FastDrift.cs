@@ -43,14 +43,29 @@ namespace RedUtils
 		/// <summary>Garde-fou : au-delà, on considère la manœuvre coincée et on rend la main.</summary>
 		private const float Timeout = 1.5f;
 
-		/// <summary>Écart de cap (rad) au-delà duquel un virage/line-up normal ne suffit plus : on drifte.
-		/// ~126°, même seuil que Cover.</summary>
+		/// <summary>
+		/// Écart de cap (rad) au-delà duquel un virage normal ne suffit plus : on drifte.
+		/// <para><b>1 rad ≈ 57°</b>, volontairement bas. Sur un point PROCHE, pivoter au frein à main
+		/// est le moyen le PLUS RAPIDE d'y arriver : au rayon de virage courant on ne peut tout
+		/// simplement pas le prendre. Ce qui empêche d'en abuser n'est pas cet angle mais
+		/// <see cref="DriftMaxDistance"/>.</para>
+		/// <para>(L'annotation « ~126° » qui accompagnait cette valeur dans Cover était fausse —
+		/// 1 rad = 57° — mais la valeur, elle, est la bonne.)</para>
+		/// </summary>
 		private const float DriftTriggerAngle = 1f;
+
+		/// <summary>
+		/// Au-delà de cette distance au point visé, <b>jamais</b> de drift.
+		/// <para>Loin, on a toute la place de tourner normalement en gardant la vitesse — alors qu'un
+		/// drift la sacrifie par construction (throttle à 0, pas de boost, frein à main). Le drift
+		/// n'est rentable que sur un point proche, qu'on ne peut pas atteindre autrement.</para>
+		/// </summary>
+		private const float DriftMaxDistance = 1000f;
 		/// <summary>Sous cette vitesse au sol, le frein à main ne fait pas pivoter : pas de drift.</summary>
 		private const float DriftMinEntrySpeed = 100f;
 		/// <summary>Taux de rotation du nez pendant la glisse (rad/s). Modèle grossier : constant.
 		/// C'EST la constante à caler au banc (state_setting_tests_defense.py).</summary>
-		private const float DriftYawRate = 3.5f;
+		private const float DriftYawRate = 1.5f;
 
 		/// <summary>Crée un fast-drift vers <paramref name="targetDirection"/> (aplatie et normalisée).</summary>
 		public FastDrift(Vec3 targetDirection)
@@ -114,14 +129,21 @@ namespace RedUtils
 
 		/// <summary>
 		/// Faut-il enclencher le fast-drift MAINTENANT pour arriver au point orienté sur
-		/// <paramref name="exitDirection"/> ? Vrai si : au sol, assez rapide, l'écart de cap dépasse
-		/// <see cref="DriftTriggerAngle"/> (un virage normal ne rattraperait pas), ET il ne reste plus
-		/// que la distance de glisse à parcourir (<see cref="SlideDistance"/>).
+		/// <paramref name="exitDirection"/> ?
+		/// <para>Vrai si : au sol, assez rapide, l'écart de cap dépasse
+		/// <see cref="DriftTriggerAngle"/>, le point est <b>proche</b>
+		/// (<see cref="DriftMaxDistance"/> — c'est la garde qui décide si le drift est rentable),
+		/// ET il ne reste plus que la distance de glisse à parcourir
+		/// (<see cref="SlideDistance"/>, pour finir la glisse SUR le point).</para>
 		/// </summary>
 		/// <param name="remainingDistance">Distance à plat restant jusqu'au point d'arrivée.</param>
 		public static bool ShouldStart(Car car, Vec3 exitDirection, float remainingDistance)
 		{
 			if (!car.IsGrounded)
+				return false;
+
+			// Loin : on a la place d'arcer sans rien perdre. Drifter coûterait plus que ça ne rapporte.
+			if (remainingDistance > DriftMaxDistance)
 				return false;
 
 			float speed = car.Velocity.FlatLen();

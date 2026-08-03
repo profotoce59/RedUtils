@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Globalization;
 using RedUtils;
 using RedUtils.Math;
 
@@ -382,6 +383,80 @@ namespace Bot
             return mates.Count > 0 && mates[0].Boost >= 50;
         }
 
+        /// <summary>Angle demandé pour le wavedash (deg), lu sur le boost du premier ADVERSAIRE garé.
+        /// 50 = 0° (aligné, l'ancien comportement du banc), pas de 2° : (boost − 50) × 2.</summary>
+        private float BenchWavedashAngle()
+        {
+            List<Car> opps = Opponents;
+            return opps.Count > 0 ? (opps[0].Boost - 50f) * 2f : 0f;
+        }
+
+        /// <summary>
+        /// Délai (s) au sol avant de relancer le wavedash suivant d'une chaîne, lu sur le boost du
+        /// coéquipier garé (boost / 100, donc 0 à 0.49 s ; ≥ 50 signifie « mode référence »).
+        /// <para>Paramétrable parce que c'est LE candidat pour expliquer l'échec du 2e dash : rejouer
+        /// la pose exacte (position, vitesse, rotation, vitesse angulaire) ne reproduit PAS l'échec,
+        /// donc l'état fautif n'est dans aucun de ces champs — il vient du flip précédent, qu'aucun
+        /// champ de Car n'expose et que le state setter remet à zéro. Balayer ce délai donne
+        /// empiriquement le temps qu'il faut laisser au flip précédent pour cesser d'agir.</para>
+        /// </summary>
+        private float BenchWavedashRelaunchDelay()
+        {
+            List<Car> mates = Teammates;
+            if (mates.Count == 0 || mates[0].Boost >= 50)
+                return 0.1f;    // défaut : le délai que Drive utilise réellement (mesuré, série Y*)
+            return mates[0].Boost / 100f;
+        }
+
+        /// <summary>Angle et direction demandés pour le wavedash mesuré (voir BenchWavedashAngle).</summary>
+        private float _wdAngle;
+        private Vec3 _wdDirection;
+
+        /// <summary>
+        /// Imprime la POSE EXACTE au départ d'un dash, déjà formatée en Python collable dans le state
+        /// setter. C'est le seul moyen de REJOUER isolément le dash n°2 d'une chaîne : il ne démarre
+        /// pas d'un arrêt propre mais d'un atterrissage, avec une vitesse verticale et surtout une
+        /// VITESSE ANGULAIRE résiduelles — c'est elle qui fait monter le nez au lieu de le piquer, et
+        /// aucun scénario « voiture posée à plat » ne peut la reproduire.
+        /// </summary>
+        private void LogWavedashPose(int dashIndex)
+        {
+            if (!Fixes.DebugWavedashPhases)
+                return;
+
+            // Invariant OBLIGATOIRE : en locale FR le séparateur décimal est la virgule, et
+            // « pitch=-0,0213 » n'est pas du Python valide — la ligne ne serait pas collable, ce qui
+            // est tout l'intérêt de cette trace. Formaté nombre par nombre : FormattableString.Invariant
+            // n'accepte qu'UNE chaîne interpolée, or concaténer avec « + » produit un string ordinaire.
+            CultureInfo inv = CultureInfo.InvariantCulture;
+            string loc = $"({Me.Location.x.ToString("F0", inv)}, {Me.Location.y.ToString("F0", inv)}, {Me.Location.z.ToString("F0", inv)})";
+            string rot = $"({Me.Rotation.x.ToString("F4", inv)}, {Me.Rotation.y.ToString("F4", inv)}, {Me.Rotation.z.ToString("F4", inv)})";
+            string vel = $"({Me.Velocity.x.ToString("F0", inv)}, {Me.Velocity.y.ToString("F0", inv)}, {Me.Velocity.z.ToString("F0", inv)})";
+            string avel = $"({Me.AngularVelocity.x.ToString("F3", inv)}, {Me.AngularVelocity.y.ToString("F3", inv)}, {Me.AngularVelocity.z.ToString("F3", inv)})";
+
+            Console.WriteLine($"[WDBENCH] POSE dash{dashIndex} sol={(Me.IsGrounded ? "oui" : "non")} " +
+                $"location={loc}, rotation={rot}, velocity={vel}, angular_velocity={avel}, boost={Me.Boost}");
+        }
+
+        /// <summary>Nombre de wavedashes à ENCHAÎNER, lu sur le boost du second adversaire garé.
+        /// 0 ou 1 = un seul (comportement d'origine du banc), 2+ = chaîne.</summary>
+        private int BenchWavedashChain()
+        {
+            List<Car> opps = Opponents;
+            int n = opps.Count > 1 ? (int)MathF.Round(opps[1].Boost / 10f) : 1;
+            return System.Math.Max(n, 1);
+        }
+
+        // --- Enchaînement (chaîne de wavedashes) ---
+        private int _wdChainTarget = 1;   // combien on en veut
+        private int _wdChainDone;         // combien sont finis
+        private float _wdDashStartTime;   // début du wavedash EN COURS
+        private float _wdDashStartSpeed;
+        private Vec3 _wdDashStartLoc;
+        private float _wdRelaunchSince = -1f;   // temps au sol depuis la fin du dash précédent
+        private float _wdRelaunchDelay = 0.02f; // délai au sol avant relance (balayable, voir BenchWavedashRelaunchDelay)
+        private float _wdLastDodgeTime = -1f;   // instant du dodge du dash précédent
+
         /// <summary>
         /// Mesure UNE manœuvre de wavedash, depuis la vitesse initiale imposée par le state setter,
         /// throttle à fond et sans jamais demander de boost. La mesure s'arrête PILE à l'atterrissage
@@ -439,13 +514,28 @@ namespace Bot
                 }
                 else
                 {
-                    _wdAction = new Wavedash(Me.Forward, Fixes.WavedashBenchBoost);
+                    // ANGLE DEMANDÉ : direction du wavedash par rapport au NEZ. Le banc a longtemps
+                    // passé Me.Forward, donc il ne testait QUE le cas parfaitement aligné — or c'est
+                    // justement un wavedash demandé de biais qui fait dériver la voiture. Canal :
+                    // boost de BLUE1 garé, 50 = 0°, pas de 2° ((boost-50)*2, soit -100°..+100°).
+                    _wdAngle = BenchWavedashAngle();
+                    _wdDirection = Me.Forward.FlatNorm().Rotate(_wdAngle * MathF.PI / 180f);
+                    _wdChainTarget = BenchWavedashChain();
+                    _wdRelaunchDelay = BenchWavedashRelaunchDelay();
+                    _wdLastDodgeTime = -1f;
+                    _wdChainDone = 0;
+                    _wdDashStartTime = Game.Time;
+                    _wdDashStartSpeed = _wdStartSpeed;
+                    _wdDashStartLoc = Me.Location;
+                    LogWavedashPose(1);
+                    _wdAction = new Wavedash(_wdDirection, Fixes.WavedashBenchBoost);
                     Action = _wdAction;
                 }
 
                 Console.WriteLine($"[WDBENCH] DEPART mode={(_wdReference ? "REFERENCE" : "wavedash")} " +
                     $"v0={_wdStartSpeed:F0} boost0={_wdStartBoost:F0}" +
-                    (_wdReference ? $" refBoost={_wdRefBoostTime:F2}s" : ""));
+                    (_wdReference ? $" refBoost={_wdRefBoostTime:F2}s"
+                                  : $" angle={_wdAngle:+0;-0}° chaine={_wdChainTarget} relance={_wdRelaunchDelay:F2}s"));
             }
 
             // Throttle à fond, jamais de boost. En mode wavedash, l'action pilote saut/dodge par-dessus
@@ -466,21 +556,86 @@ namespace Bot
             {
                 // WAVEDASH : on s'arrête PILE à l'atterrissage (fin de manœuvre), et on ne mesure que
                 // le wavedash — vitesse, gain, pic, boost, durée de non-dispo, distance parcourue.
-                if (_wdAction.Finished && _wdLeftGround)
+                //
+                // Le cas « entre deux dashes » (_wdAction == null) passe EN PREMIER : c'est lui qui
+                // relance la chaîne, et le tester après aurait déréférencé _wdAction déjà remis à null.
+                if (_wdAction == null)
+                {
+                    // Entre deux dashes : on attend d'être posé, puis on relance après le même délai
+                    // que Drive. Un dash relancé en l'air ou pendant le rebond ne mesure rien.
+                    if (!Me.IsGrounded)
+                    {
+                        _wdRelaunchSince = -1f;
+                    }
+                    else
+                    {
+                        if (_wdRelaunchSince < 0f)
+                            _wdRelaunchSince = Game.Time;
+                        if (Game.Time - _wdRelaunchSince >= _wdRelaunchDelay)
+                        {
+                            _wdDashStartTime = Game.Time;
+                            _wdDashStartSpeed = Me.Velocity.FlatLen();
+                            _wdDashStartLoc = Me.Location;
+                            _wdLeftGround = false;
+                            // Temps écoulé depuis l'ENTRÉE DE DODGE précédente, pas depuis
+                            // l'atterrissage : c'est le flip qui continue d'agir, pas le contact.
+                            float sinceDodge = _wdLastDodgeTime > 0f ? Game.Time - _wdLastDodgeTime : -1f;
+                            CultureInfo inv = CultureInfo.InvariantCulture;
+                            Console.WriteLine($"[WDBENCH] RELANCE dash{_wdChainDone + 1} " +
+                                $"apresSol={_wdRelaunchDelay.ToString("F3", inv)}s " +
+                                $"depuisDodgePrecedent={sinceDodge.ToString("F3", inv)}s");
+                            LogWavedashPose(_wdChainDone + 1);
+                            _wdAction = new Wavedash(_wdDirection, Fixes.WavedashBenchBoost);
+                            Action = _wdAction;
+                        }
+                    }
+                }
+                else if (_wdAction.Finished && _wdLeftGround)
                 {
                     float vFin = Me.Velocity.FlatLen();
-                    float dist = Me.Location.FlatDist(_wdStartLoc);
-                    float boostUsed = _wdStartBoost - Me.Boost;
-                    Console.WriteLine($"[WDBENCH] FIN wavedash v0={_wdStartSpeed:F0} vFin={vFin:F0} " +
-                        $"gain={vFin - _wdStartSpeed:+0;-0} vPic={_wdPeakSpeed:F0} boostUtilise={boostUsed:F0} " +
-                        $"duree={elapsed:F3}s (=non-dispo, +0.2s avant relance Drive) dist={dist:F0}");
-                    _wdDone = true;
-                    Action = null;
+
+                    // DÉRIVE : de combien on a fini À CÔTÉ de la direction demandée. C'est la mesure du
+                    // « décalage » — un wavedash réussi avance DANS la direction voulue, un wavedash
+                    // parti de travers finit décalé et perd de la vitesse pour rien.
+                    float capFin = _wdDirection.FlatAngle(Me.Velocity.FlatNorm()) * 180f / MathF.PI;
+                    _wdChainDone++;
+
+                    // Bilan du dash qui vient de finir (isolé, pas cumulé) : c'est en comparant les
+                    // dashes entre eux qu'on voit le 2e ou le 3e dégénérer.
+                    float dashDur = Game.Time - _wdDashStartTime;
+                    float dashLateral = (Me.Location - _wdDashStartLoc).Flatten().Dot(_wdDirection.Cross());
+                    Console.WriteLine($"[WDBENCH] DASH {_wdChainDone}/{_wdChainTarget} " +
+                        $"v0={_wdDashStartSpeed:F0} vFin={vFin:F0} gain={vFin - _wdDashStartSpeed:+0;-0} " +
+                        $"duree={dashDur:F3}s dist={_wdDashStartLoc.FlatDist(Me.Location):F0} " +
+                        $"derive={dashLateral:+0;-0} capFin={capFin:F0}°");
+
+                    if (_wdChainDone < _wdChainTarget)
+                    {
+                        // Enchaînement : on relance dès que la voiture est de nouveau au sol, après
+                        // _wdRelaunchDelay (0.02s par défaut = ce que Drive fait réellement, mais
+                        // balayable pour trouver le temps qu'il faut au flip précédent pour cesser).
+                        _wdLastDodgeTime = _wdAction.DodgeTime;
+                        _wdAction = null;
+                        Action = null;
+                        _wdRelaunchSince = -1f;
+                    }
+                    else
+                    {
+                        float dist = Me.Location.FlatDist(_wdStartLoc);
+                        float boostUsed = _wdStartBoost - Me.Boost;
+                        float lateral = (Me.Location - _wdStartLoc).Flatten().Dot(_wdDirection.Cross());
+                        Console.WriteLine($"[WDBENCH] FIN {(_wdChainTarget > 1 ? $"CHAINE x{_wdChainTarget}" : "wavedash")} " +
+                            $"angle={_wdAngle:+0;-0}° v0={_wdStartSpeed:F0} vFin={vFin:F0} " +
+                            $"gain={vFin - _wdStartSpeed:+0;-0} vPic={_wdPeakSpeed:F0} boostUtilise={boostUsed:F0} " +
+                            $"duree={elapsed:F3}s dist={dist:F0} derive={lateral:+0;-0} capFin={capFin:F0}°");
+                        _wdDone = true;
+                        Action = null;
+                    }
                 }
-                else if (elapsed > 3f)
+                else if (elapsed > 3f * _wdChainTarget)
                 {
-                    Console.WriteLine($"[WDBENCH] TIMEOUT wavedash v0={_wdStartSpeed:F0} pas d'atterrissage " +
-                        $"apres {elapsed:F2}s (leftGround={(_wdLeftGround ? "oui" : "non")}) — wavedash au sol casse ?");
+                    Console.WriteLine($"[WDBENCH] TIMEOUT dash {_wdChainDone + 1}/{_wdChainTarget} v0={_wdStartSpeed:F0} " +
+                        $"pas d'atterrissage apres {elapsed:F2}s (leftGround={(_wdLeftGround ? "oui" : "non")}) — wavedash au sol casse ?");
                     _wdDone = true;
                     Action = null;
                 }
@@ -549,8 +704,9 @@ namespace Bot
             if (!_rotBenchRunning)
             {
                 Vec3 dest = Rotation.DefensivePosition(OurGoal);
-                // Même règle qu'en jeu : on tourne par le côté opposé à celui où l'on est.
-                int side = Me.Location.x >= 0f ? -1 : 1;
+                // Même règle qu'en jeu, sans la dupliquer : opposé à la balle si elle est latérale,
+                // sinon le côté le moins cher.
+                int side = Rotation.RotationSide(Me);
 
                 _rotBenchAction = new Rotate(Me, dest, side, OurGoal);
                 _rotBenchStartTime = Game.Time;
@@ -754,8 +910,9 @@ namespace Bot
                         && LivingTeammates.Count == 1 && Rotation.IsGoalSide(LivingTeammates[0]))
                     {
                         _rotationPendingTime = -1f;
-                        // On tourne par le côté OPPOSÉ à celui où l'on vient de contester (= le nôtre).
-                        int rotationSide = Me.Location.x >= 0f ? -1 : 1;
+                        // Côté opposé à la balle si elle est latérale, sinon le côté le moins cher
+                        // (voir Rotation.RotationSide).
+                        int rotationSide = Rotation.RotationSide(Me);
                         SetAction(new Rotate(Me, RotationDestination(gameState, fieldZone), rotationSide, OurGoal), "Rotation");
                         return;
                     }
@@ -1034,7 +1191,25 @@ namespace Bot
 
                 // Cible = première slice atteignable avec marge de confort (au-devant de la balle),
                 // et on note l'instant où la balle y sera : c'est lui qui donne la cadence à l'Arrive.
+                //
+                // On n'engage le save QUE sur une slice vraiment atteignable dans le bon angle
+                // (InterceptSlack passe par l'ETA DIRECTIONNEL). Tant qu'il n'y en a pas, on ne
+                // temporise pas sur un point douteux : on RENTRE À PLEINE VITESSE vers notre but en
+                // contournant la balle, et on engage dès qu'une slice devient jouable.
+                //
+                // C'est le manque de vitesse dans cette phase qui faisait rater les saves : l'Arrive
+                // dose sa vitesse (distance / temps restant) pour arriver PILE à l'heure, donc sur une
+                // interception lointaine il roulait au ralenti — et se retrouvait lent et hors de
+                // position quand la balle arrivait vraiment. Latcher la cible n'y changeait rien : si
+                // l'on n'atteint pas la slice au tick suivant, c'est le CALCUL qui était faux, et la
+                // verrouiller ne fait que figer l'erreur.
                 BallSlice intercept = FindSaveInterceptSlice(goalSlice.Time);
+                if (intercept == null && Game.Time - _saveTargetTime >= SaveLatchTime)
+                {
+                    SetDrive(SaveRetreatTarget(), "Drive→RepliSave", wasteBoost: true);
+                    return true;
+                }
+
                 Vec3 saveTarget;
                 float saveArrivalTime;
                 if (intercept != null)
@@ -1045,16 +1220,12 @@ namespace Bot
                     _saveArrivalTime = saveArrivalTime;
                     _saveTargetTime = Game.Time;
                 }
-                else if (Game.Time - _saveTargetTime < SaveLatchTime)
-                {
-                    saveTarget = _saveTarget;
-                    saveArrivalTime = _saveArrivalTime;
-                }
                 else
                 {
-                    // Aucune interception : repli près-but, sans cadence imposée (arrivalTime < 0).
-                    saveTarget = OurGoal.Location + OurGoal.Location.FlatDirection(Ball.Location) * 300f;
-                    saveArrivalTime = -1f;
+                    // Trou court dans la détection : on garde la dernière interception connue plutôt
+                    // que de basculer en repli pour un tick (anti-oscillation).
+                    saveTarget = _saveTarget;
+                    saveArrivalTime = _saveArrivalTime;
                 }
 
                 // Arrive (et non Drive) : il DOSE sa vitesse (distance / temps restant) pour arriver
@@ -1278,7 +1449,61 @@ namespace Bot
             Vec3 contact = GoalSideContact(s.Location, s.Velocity);
             if (!ContactInFrontOfGoal(contact))
                 return float.NaN;
-            return (s.Time - Game.Time) - Movement.EtaFor(Me, contact);
+
+            // ETA DIRECTIONNEL, et non Movement.EtaFor. Un save ne demande pas « quand puis-je être à
+            // ce point » mais « quand puis-je y être EN ROULANT DANS LE BON SENS » — arriver de
+            // travers ne bloque rien. Movement.cs le dit en toutes lettres dans son domaine de
+            // validité : ce cas appartient à Drive.GetEta(car, target, arrivalDirection).
+            //
+            // C'était LA cause des saves ratés : Movement.EtaFor ignore l'alignement, donc il
+            // déclarait atteignables des slices très en amont qu'on ne pouvait pas jouer. Le bot
+            // s'engageait dessus, l'Arrive dosait sa vitesse pour y arriver « à l'heure », et il se
+            // retrouvait lent et de travers. Une slice écartée ici renvoie au repli en vitesse.
+            return (s.Time - Game.Time) - Drive.GetEta(Me, contact, SaveApproachDirection(s));
+        }
+
+        /// <summary>
+        /// Direction dans laquelle on doit rouler en touchant la balle pour la BLOQUER : face à elle,
+        /// donc à l'opposé de son déplacement. Sur une balle lente sa vitesse n'indique plus rien
+        /// (<see cref="SlowBallSpeed"/>) — on retombe alors sur « depuis notre but vers la balle »,
+        /// même repli que <see cref="GoalSideContact"/>.
+        /// </summary>
+        private Vec3 SaveApproachDirection(BallSlice s)
+        {
+            return s.Velocity.FlatLen() > SlowBallSpeed
+                ? -s.Velocity.FlatNorm()
+                : OurGoal.Location.FlatDirection(s.Location);
+        }
+
+        /// <summary>Rayon autour de la balle qu'on refuse de traverser en repliant.</summary>
+        private const float SaveAvoidBallRadius = 400f;
+
+        /// <summary>
+        /// Où rentrer quand aucune interception n'est jouable : devant notre but, <b>en contournant la
+        /// balle</b>. Rejoint à pleine vitesse (Drive, pas Arrive) — le but de cette phase est
+        /// justement de PRENDRE DE LA VITESSE pour pouvoir engager le save ensuite.
+        ///
+        /// <para>Le contournement compte autant que le repli : foncer droit dedans pousserait la balle
+        /// vers notre propre but, ce que la voiture fait d'autant plus facilement qu'elle arrive vite.</para>
+        /// </summary>
+        private Vec3 SaveRetreatTarget()
+        {
+            Vec3 target = OurGoal.Location + OurGoal.Location.FlatDirection(Ball.Location) * 300f;
+
+            Vec3 toTarget = Me.Location.FlatDirection(target);
+            Vec3 toBall = (Ball.Location - Me.Location).Flatten();
+
+            float along = toBall.Dot(toTarget);
+            if (along <= 0f || along > Me.Location.FlatDist(target))
+                return target;   // la balle n'est pas entre nous et la cible
+
+            Vec3 sideways = toTarget.Cross();
+            float lateral = toBall.Dot(sideways);
+            if (MathF.Abs(lateral) > SaveAvoidBallRadius)
+                return target;   // on passe déjà assez large
+
+            // Contourner du côté où l'on est DÉJÀ décalé : c'est le détour le plus court.
+            return target + sideways * (lateral >= 0f ? -SaveAvoidBallRadius : SaveAvoidBallRadius);
         }
 
         /// <summary>En deçà de cette vitesse, la direction de la balle n'est pas fiable pour en déduire

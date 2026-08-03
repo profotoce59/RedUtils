@@ -91,6 +91,33 @@ namespace Bot
             return (car.Location.y - Ball.Location.y) * side > -GoalSideMargin;
         }
 
+        // Bande centrale : en deçà de cet écart à l'axe, la balle n'est « d'aucun côté ».
+        private const float CentralBallWidth = 1000f;
+        // Anticipation latérale : on juge où l'on SERA, pas seulement où l'on est. Une sortie de
+        // contest lancée vers la gauche doit compter comme étant à gauche.
+        private const float RotationSideLead = 0.5f;
+
+        /// <summary>
+        /// Côté (signe en x) par lequel effectuer la rotation.
+        ///
+        /// <para><b>Balle franchement latérale</b> → on tourne par l'AUTRE côté. C'est la règle
+        /// d'origine, et sa raison d'être : ne pas repasser dans le jeu ni doubler le coéquipier.</para>
+        ///
+        /// <para><b>Balle centrale</b> (moins de <see cref="CentralBallWidth"/> de l'axe) → on prend
+        /// le côté le MOINS CHER, c'est-à-dire celui vers lequel on va déjà (position + élan).
+        /// Forcer le côté opposé n'apporte rien ici : aucun des deux ne nous met hors du jeu, mais
+        /// traverser pour aller chercher les pads d'en face coûte du temps ET du boost — précisément
+        /// ce que la rotation est censée économiser.</para>
+        /// </summary>
+        public static int RotationSide(Car car)
+        {
+            if (MathF.Abs(Ball.Location.x) > CentralBallWidth)
+                return -MathF.Sign(Ball.Location.x);
+
+            float lateral = car.Location.x + car.Velocity.x * RotationSideLead;
+            return lateral >= 0f ? 1 : -1;
+        }
+
         /// <summary>
         /// Score = ETA to reach the ball + angle penalty if the shot would go backwards.
         /// Lower is better (Attacker = lowest score).

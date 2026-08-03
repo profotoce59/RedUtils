@@ -153,6 +153,16 @@ namespace RedUtils
 		/// recompiler, lancer un match 4 voitures, puis dérouler state_setting_tests_rotation.py.</para></summary>
 		public static bool RotationBench = false;
 
+		/// <summary>DEBUG — Trace PHASE PAR PHASE l'intérieur d'un Wavedash, pour MyBot.
+		/// <para>Une ligne à chaque changement de phase (préfixe <c>&gt;&gt;</c>) et un battement 10x/s
+		/// pendant qu'on y reste. Colonnes : phase, temps écoulé DEPUIS LE DÉBUT de la manœuvre, au sol
+		/// ou non, z, vz, angle du nez, vitesse à plat, saut/double-saut déjà consommés.</para>
+		/// <para>Sert à comprendre POURQUOI un wavedash enchaîné se comporte autrement que le premier :
+		/// une phase qui dure anormalement longtemps avec <c>sol=OUI</c> signifie que le saut n'est
+		/// jamais parti (la voiture roule au lieu de décoller) et que la machine attend une condition
+		/// aérienne qui ne viendra pas — jusqu'au garde-fou de fin.</para></summary>
+		public static bool DebugWavedashPhases = false;
+
 		/// <summary>DEBUG — Banc de mesure du Wavedash (une seule action, isolée).
 		/// <para>Quand ce flag est vrai, le bot ABANDONNE toute stratégie : depuis la pose du state
 		/// setter (vitesse initiale imposée), il déclenche UN wavedash droit devant, throttle à fond

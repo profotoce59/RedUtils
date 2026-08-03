@@ -191,23 +191,43 @@ namespace RedUtils
 
 				if (AllowDodges && Field.InField(predictedLocation, 50) && carSpeed < 2000 && bot.Me.Location.z < 600 && Game.Gravity.z < -500 && MathF.Abs(bot.Me.Velocity.Dot(bot.Me.Up)) < 100)
 				{
-					// Look for dodges only if we won't hit a wall, and when we actually need to
+					// Look for dodges only if we won't hit a wall, and when we actually need to.
+					//
+					// NB : les flips visent finalTarget, la MÊME cible que la garde d'alignement et que
+					// le AimAt plus haut. Ils visaient Target (la cible brute) : le bot se croyait
+					// aligné sur finalTarget puis flippait ailleurs — d'autant plus loin que finalTarget
+					// est décalé (ExitDirection, contournement de poteau). D'où la dérive latérale
+					// observée à l'atterrissage.
 					if (forwardSpeed > 0)
 					{
 						if (TargetSpeed > 100 + forwardSpeed)
 						{
 							// When we're moving forward, and need extra speed, look for dodges, speedflips, and wavedashes
-							if (bot.Me.Location.z < 200 && bot.Me.IsGrounded && carSpeed > (bot.Me.Boost > 30 ? 800 : 1000) && bot.Me.Forward.FlatAngle(bot.Me.Location.Direction(finalTarget)) < 0.1f && timeOnGround > 0.02f)
+							// timeOnGround > 0.1f : délai au sol avant de relancer un flip, MESURÉ au banc
+							// (state_setting_tests_wavedash.py, scénarios Y*, balayage 0.02 → 0.45 s).
+							//
+							// Ce n'est pas une marge de confort : à 0.02 s le wavedash suivant partait
+							// pendant que le FLIP PRÉCÉDENT agissait encore sur la rotation, et le nez
+							// remontait malgré un pitch piqué — la séquence glissait et le dodge partait
+							// nez bas, donc en front flip. Cet état n'est exposé par aucun champ de Car
+							// et le state setter le remet à zéro : rejouer la pose exacte (position,
+							// vitesse, rotation, vitesse angulaire) ne reproduisait PAS l'échec. Seul le
+							// balayage de ce délai pouvait le chiffrer.
+							//
+							// Garder aussi court que la mesure l'autorise : enchaîner vite est ce qui
+							// fait gagner de la vitesse. Ne pas monter « pour stabiliser » sans repasser
+							// le banc.
+							if (bot.Me.Location.z < 200 && bot.Me.IsGrounded && carSpeed > (bot.Me.Boost > 30 ? 800 : 1000) && bot.Me.Forward.FlatAngle(bot.Me.Location.Direction(finalTarget)) < 0.1f && timeOnGround > 0.1f)
 							{
 								// On the ground: keep speedflips for far targets, otherwise wavedash.
 								// Variante BOOSTÉE si Boost>30 (paie dès v0=800), sinon sans-boost (dès v0=1000).
 								// En dessous du seuil : rouler/booster tout droit gagne plus de terrain (mesuré au banc).
-								Wavedash wavedash = new Wavedash(bot.Me.Location.FlatDirection(Target), bot.Me.Boost > 30);
+								Wavedash wavedash = new Wavedash(bot.Me.Location.FlatDirection(finalTarget), bot.Me.Boost > 30);
 
 								if (speedFlipTimeLeft > SpeedFlip.Duration && bot.Me.Boost > 0 && Field.InField(predictedLocation, 500) && WasteBoost)
 								{
 									// Only speedflip if we have time, and have boost
-									Action = new SpeedFlip(bot.Me.Location.FlatDirection(Target));
+									Action = new SpeedFlip(bot.Me.Location.FlatDirection(finalTarget));
 								}
 								else if (timeLeft > wavedash.Duration + 0.05f) // + récup : cible pas trop proche (Duration ~0.9s boosté / ~0.97s sans)
 								{
@@ -218,7 +238,7 @@ namespace RedUtils
 							else if (bot.Me.Location.z > 100 && !bot.Me.HasDoubleJumped && (!bot.Me.IsGrounded || bot.Me.Velocity.Dot(Vec3.Up) < 200))
 							{
 								// If we are on the wall, or if we are falling and have a dodge, look for a wavedash
-								Wavedash wavedash = new Wavedash(bot.Me.Location.FlatDirection(Target));
+								Wavedash wavedash = new Wavedash(bot.Me.Location.FlatDirection(finalTarget));
 
 								if (timeLeft > wavedash.Duration)
 								{

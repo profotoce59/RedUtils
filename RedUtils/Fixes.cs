@@ -121,6 +121,29 @@ namespace RedUtils
 		/// CoverPostRamp</c>, et les constantes de <c>Cover.cs</c>.</para></summary>
 		public static bool GoalieCover = true;
 
+		/// <summary>Feature — Recherche de frappe par simulation RocketSim (AUDIT §7).
+		/// <para><b>false (défaut)</b> : le bot frappe comme avant, seuils de flip codés en dur.
+		/// <b>true</b> : à l'approche du contact, une recherche part sur un thread de fond et
+		/// simule une quarantaine de plans (tick de déclenchement de la frappe × braquage de
+		/// dernier moment × sens du tonneau) pour retenir celui dont la balle sort le mieux.</para>
+		/// <para><b>Prérequis, sans lesquels le flag ne fait rien</b> : <c>RocketSimC.dll</c>
+		/// construite (voir <c>native/RocketSimC/README.md</c>) et posée à côté de
+		/// <c>Bot.exe</c>. Sans elle, <c>ShotSearchRunner.Available</c> est faux et le bot garde
+		/// son comportement d'origine.</para>
+		/// <para><b>À laisser à false tant que <see cref="DebugShotSearch"/> n'a pas montré des
+		/// résultats sains.</b> Une recherche partant d'un état de départ faux produit des plans
+		/// confiants et absurdes, sans rien signaler.</para></summary>
+		public static bool ShotSearch = false;
+
+		/// <summary>DEBUG — Trace la recherche de frappe : plan retenu, note, vitesse de balle
+		/// prédite, et durée réelle de la recherche.
+		/// <para>La durée est la valeur à surveiller en premier : elle doit rester bien en dessous
+		/// du temps disponible avant le contact. Le budget d'un tick est de 8,33 ms à 120 Hz, et
+		/// la recherche est justement déportée pour pouvoir le dépasser — mais pas de beaucoup.</para>
+		/// <para>Sert aussi à comparer, sans rien changer au comportement, ce que la recherche
+		/// aurait choisi contre ce que le bot fait réellement (<c>ShotSearch</c> à false).</para></summary>
+		public static bool DebugShotSearch = false;
+
 		/// <summary>DEBUG — Trace l'action <see cref="Cover"/> (10x/s + rendu 3D), pour MyBot.
 		/// <para>Console : état APPROCHE / HOLD / AIR, distance au POSTE (pas à la balle), écart de cap
 		/// vers la balle en degrés, sens de pivot, vitesse et commandes (throttle/steer/frein à main).

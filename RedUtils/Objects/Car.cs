@@ -17,8 +17,22 @@ namespace RedUtils
 		public const float AirThrottleAccel = 66.667f;
 		/// <summary>The decceleration you get when you throttle on the ground in the opposite direction of where you're heading</summary>
 		public const float BrakeAccel = 3500f;
-		/// <summary>The acceleration you get when you boost</summary>
+		/// <summary>
+		/// The acceleration you get when you boost <b>on the ground</b> (RocketSim
+		/// <c>BOOST_ACCEL_GROUND = 2975/3</c>). Use <see cref="BoostAccelAir"/> when airborne.
+		/// </summary>
 		public const float BoostAccel = 991.667f;
+		/// <summary>
+		/// The acceleration you get when you boost <b>in the air</b> (RocketSim
+		/// <c>BOOST_ACCEL_AIR = 3175/3</c>) — 6.7 % more than on the ground.
+		///
+		/// <para>Le jeu applique deux valeurs différentes ; ce projet n'en avait qu'une, la valeur
+		/// sol, y compris dans les calculs aériens d'<see cref="AerialShot"/> et de
+		/// <see cref="DoubleJumpShot"/>. Le bot sous-estimait donc sa propre accélération en l'air
+		/// et refusait des aériens qu'il pouvait réussir — erreur silencieuse parce qu'elle va dans
+		/// le sens prudent. Voir AUDIT §6.2.</para>
+		/// </summary>
+		public const float BoostAccelAir = 1058.333f;
 		/// <summary>The rate at which you consume boost</summary>
 		public const float BoostConsumption = 33.3f;
 		/// <summary>The max speed of the car</summary>

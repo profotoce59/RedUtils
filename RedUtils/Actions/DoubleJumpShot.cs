@@ -190,7 +190,7 @@ namespace RedUtils
 					Vec3 offset = TargetLocation - finPos;
 
 					// Based on those values, we boost and throttle so we get as close to the target location as possible
-					bot.Controller.Boost = offset.Dot(bot.Me.Forward) / timeRemaining >= (Car.BoostAccel + Car.AirThrottleAccel) * MathF.Max(bot.DeltaTime, 13f / 120f) && offset.Normalize().Dot(bot.Me.Forward) > 0.75f;
+					bot.Controller.Boost = offset.Dot(bot.Me.Forward) / timeRemaining >= (Car.BoostAccelAir + Car.AirThrottleAccel) * MathF.Max(bot.DeltaTime, 13f / 120f) && offset.Normalize().Dot(bot.Me.Forward) > 0.75f;
 					bot.Controller.Throttle = offset.Normalize().Dot(bot.Me.Forward) > 0.5f ? 1 : 0;
 
 					// Aim in the shot direction

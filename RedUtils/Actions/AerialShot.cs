@@ -177,7 +177,7 @@ namespace RedUtils
 				bot.AimAt(bot.Me.Location + offset, _jumped ? bot.Me.Location.Direction(Slice.Location) : Vec3.Up);
 
 				// Boosts and throttles when neccesary
-				bot.Controller.Boost = offset.Dot(bot.Me.Forward) / timeRemaining >= (Car.BoostAccel + Car.AirThrottleAccel) * MathF.Max(bot.DeltaTime, 13f / 120f) && offset.Angle(bot.Me.Forward) < 0.4f;
+				bot.Controller.Boost = offset.Dot(bot.Me.Forward) / timeRemaining >= (Car.BoostAccelAir + Car.AirThrottleAccel) * MathF.Max(bot.DeltaTime, 13f / 120f) && offset.Angle(bot.Me.Forward) < 0.4f;
 				bot.Controller.Throttle = Utils.Cap(offset.Dot(bot.Me.Forward) / timeRemaining / (Car.AirThrottleAccel * MathF.Max(bot.DeltaTime, 1f / 120f)), -1, 1);
 
 				// If we are currently double jumping, let go of all direction keys so we don't flip on accident
@@ -190,7 +190,7 @@ namespace RedUtils
 				}
 
 				// If the aerial is finished, or is no longer possible, stop it
-				if (timeRemaining <= 0f || (_jumped && offset.Length() > 50 && timeRemaining > 0.5f && requiredAccel * 0.8f > Car.AirThrottleAccel && (bot.Me.Boost == 0 || requiredAccel * 0.8f > (Car.BoostAccel + Car.AirThrottleAccel))) || (!ShotValid() && timeRemaining > 0.5f) || (bot.Me.IsGrounded && _jumped))
+				if (timeRemaining <= 0f || (_jumped && offset.Length() > 50 && timeRemaining > 0.5f && requiredAccel * 0.8f > Car.AirThrottleAccel && (bot.Me.Boost == 0 || requiredAccel * 0.8f > (Car.BoostAccelAir + Car.AirThrottleAccel))) || (!ShotValid() && timeRemaining > 0.5f) || (bot.Me.IsGrounded && _jumped))
 				{
 					Finished = true;
 				}
@@ -276,9 +276,9 @@ namespace RedUtils
 
 			float tau1 = turnTime * Utils.Cap(1 - 0.4f / angle, 0, 1);
 			float requiredAccel = 2 * deltaX.Length() / MathF.Pow(timeRemaining - tau1, 2);
-			float ratio = requiredAccel / (Car.BoostAccel + Car.AirThrottleAccel);
+			float ratio = requiredAccel / (Car.BoostAccelAir + Car.AirThrottleAccel);
 			float tau2 = timeRemaining - (timeRemaining - tau1) * MathF.Sqrt(1 - Utils.Cap(ratio, 0, 1));
-			Vec3 velocityEstimate = finVel + (Car.BoostAccel + Car.AirThrottleAccel) * (tau2 - tau1) * direction;
+			Vec3 velocityEstimate = finVel + (Car.BoostAccelAir + Car.AirThrottleAccel) * (tau2 - tau1) * direction;
 			float boostEstimate = (tau2 - tau1) * Car.BoostConsumption;
 			bool enoughBoost = boostEstimate < car.Boost * 0.9f;
 			bool enoughTime = MathF.Abs(ratio) < 0.9f;

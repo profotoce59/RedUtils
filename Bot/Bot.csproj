@@ -13,4 +13,26 @@
     <ProjectReference Include="..\RedUtils\RedUtils.csproj" />
   </ItemGroup>
 
+  <!--
+    RocketSimC : bibliothèque native OPTIONNELLE, utilisée par la recherche de frappe
+    (Fixes.ShotSearch). Si elle n'a pas été construite, ces items sont vides, la cible est
+    ignorée, et le bot tourne exactement comme avant — ShotSearchRunner.Available vaut faux.
+
+    Le fichier doit se trouver à côté de Bot.exe : c'est là que le chargeur du système va le
+    chercher au premier P/Invoke. Le construire ne suffit donc pas, il faut le recopier — d'où
+    cette cible plutôt qu'une étape manuelle qu'on oublie.
+
+    Tâche VS Code « rocketsim: build », ou voir native/RocketSimC/README.md.
+  -->
+  <ItemGroup>
+    <RocketSimCLib Include="$(MSBuildThisFileDirectory)..\native\RocketSimC\build\**\RocketSimC.dll" />
+    <RocketSimCLib Include="$(MSBuildThisFileDirectory)..\native\RocketSimC\build\**\libRocketSimC.dylib" />
+    <RocketSimCLib Include="$(MSBuildThisFileDirectory)..\native\RocketSimC\build\**\libRocketSimC.so" />
+  </ItemGroup>
+
+  <Target Name="CopyRocketSimC" AfterTargets="Build" Condition="'@(RocketSimCLib)' != ''">
+    <Copy SourceFiles="@(RocketSimCLib)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="RocketSimC : %(RocketSimCLib.Filename)%(RocketSimCLib.Extension) copié dans $(OutDir)" />
+  </Target>
+
 </Project>

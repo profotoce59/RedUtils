@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
 using RedUtils;
+using RedUtils.Interop;
 using RedUtils.Math;
 
 namespace Bot
@@ -72,6 +73,49 @@ namespace Bot
         // Balle plus haute que ça = ce n'est plus un dribble au sol contestable par un Fifty plat.
         private const float ChallengeMaxBallHeight = 300f;
 
+        // --- Recherche de frappe RocketSim, en OBSERVATION SEULE (Fixes.DebugShotSearch) ---
+        // La recherche tourne, elle est loggée, et RIEN n'en dépend : aucun input du bot ne la lit.
+        // C'est délibéré — on mesure d'abord le coût réel et la crédibilité des plans, avant de
+        // laisser une simulation décider d'une frappe. Voir Fixes.ShotSearch pour la suite.
+        private ShotSearchRunner _shotSearch;
+        private bool _shotSearchCreated;
+        // Tir dont on attend le résultat, et instant de la demande — pour mesurer la latence réelle
+        // entre « je lance » et « je peux lire », qui est ce qui décide de l'utilisabilité.
+        private string _pendingSearchId;
+        private float _pendingSearchTime;
+        // État sol/air du tick précédent : sert à détecter le front du décollage, seul instant où
+        // l'état d'une voiture en l'air est intégralement connu.
+        private bool _wasGrounded = true;
+        // Latence demande→lecture de la dernière recherche, en ms. Elle borne les blocs explorables :
+        // proposer d'agir sur des ticks déjà écoulés au moment où la réponse arrive ne sert à rien.
+        // Valeur initiale volontairement pessimiste, avant toute mesure.
+        private float _lastSearchLatencyMs = 100f;
+        // Marge sur la latence mesurée : elle varie d'une recherche à l'autre (ordonnancement du
+        // thread de fond), et sous-estimer rend le plan inapplicable — l'erreur coûteuse est ici.
+        private const float SearchLatencyMargin = 1.5f;
+
+        // --- Application du plan retenu (Fixes.ShotSearch) ---
+        // Le plan est exprimé en ticks de SIMULATION (120 Hz), comptés depuis le décollage. Le jeu,
+        // lui, peut appeler le bot à une autre cadence — 60 Hz selon la configuration RLBot. Compter
+        // les frames reviendrait à confondre les deux : à 60 Hz, le tick 42 d'un plan serait atteint
+        // après 0,7 s de vol au lieu de 0,35, donc souvent jamais. On le dérive donc du temps écoulé.
+        private StrikePlan? _activePlan;
+        private float _flightStartTime;
+        private bool _inFlight;
+        // Nombre de frames où le plan a réellement écrasé les inputs — 0 = jamais appliqué.
+        private int _planAppliedFrames;
+        // Le tir auquel le plan appartient. Si l'action change en cours de vol, le plan porte sur
+        // une situation qui n'existe plus et doit être abandonné.
+        private string _flightShotId;
+        private bool _planLogged;
+
+        // --- Mémoire des poses d'avant-tir (Fixes.ShotWatcher) ---
+        // Une seule voiture observe : le tampon et l'écriture ne servent à rien en quadruple, et le
+        // fichier de captures deviendrait illisible avec 4 flux entrelacés. Même filtre par NOM que
+        // le reste des traces (DebugShotSearch, ROTBENCH).
+        private const string ShotWatcherCarName = "MyBot";
+        private ShotWatcher _shotWatcher;
+
         public MyBot(string botName, int botTeam, int botIndex) : base(botName, botTeam, botIndex) { }
 
         private void SetAction(IAction action, string intent)
@@ -122,6 +166,18 @@ namespace Bot
             _lastState = (GameStateMode)(-1);
             _lastZone = (FieldZone)(-1);
             _lastIntent = null;
+
+            // Une recherche lancée avant la téléportation porte sur une voiture et une balle qui
+            // n'existent plus : son résultat serait lu comme s'il décrivait le nouveau scénario.
+            _shotSearch?.Discard();
+            _pendingSearchId = null;
+
+            // Les poses d'AVANT la téléportation décrivent une situation qui n'existe plus : les
+            // garder produirait une capture mélangeant deux scénarios.
+            _shotWatcher?.Reset();
+            _wasGrounded = true;
+            _inFlight = false;
+            _activePlan = null;
 
             // Marqueur « début de scénario » : dumpe la pose exacte posée par le state setter, pour
             // pouvoir relier un comportement bizarre à ses conditions de départ sans les deviner.
@@ -842,6 +898,8 @@ namespace Bot
             }
 
             TraceShot();
+            TraceShotSearch();
+            WatchShotPose();
             TrackEta();
         }
 
@@ -1839,7 +1897,7 @@ namespace Bot
                 if (s.Time >= shot.Slice.Time) { predictedNow = s.Location; break; }
             }
             float drift = predictedNow.Dist(shot.Slice.Location);
-            if(Me.Name == "MyBo")
+            if(Me.Name == "MyBot")
                 {
                 Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}#{Index}] {(isNew ? "NEW " : "    ")}{_intent} " +
                     $"tRem={tRem:F2} dTgt={Me.Location.Dist(shot.TargetLocation):F0} v={Me.Velocity.Length():F0} boost={Me.Boost:F0} " +
@@ -1848,6 +1906,268 @@ namespace Bot
                     $"tgtLoc=({shot.TargetLocation.x:F0},{shot.TargetLocation.y:F0},{shot.TargetLocation.z:F0}) " +
                     $"ball=({Ball.Location.x:F0},{Ball.Location.y:F0},{Ball.Location.z:F0})");
                 }
+        }
+
+        /// <summary>
+        /// Alimente la mémoire des poses d'avant-tir (<see cref="ShotWatcher"/>, Fixes.ShotWatcher).
+        ///
+        /// <para>Appelé en FIN de tick, une fois l'action choisie : c'est cette action-là que le
+        /// watcher regarde pour détecter la bascule vers un tir. Appelé plus tôt, il verrait
+        /// systématiquement l'action du tick précédent et daterait chaque capture d'un tick.</para>
+        ///
+        /// <para>L'instance est créée à la première utilisation, donc aucun fichier n'est ouvert ni
+        /// aucun tampon alloué tant que le flag est à false.</para>
+        /// </summary>
+        private void WatchShotPose()
+        {
+            if (!Fixes.ShotWatcher || Me.Name != ShotWatcherCarName)
+                return;
+
+            _shotWatcher ??= new ShotWatcher(Me.Name);
+            _shotWatcher.Update(Game.Time, Action, _intent);
+        }
+
+        /// <summary>
+        /// Fait tourner la recherche de frappe RocketSim <b>en observation</b> (Fixes.DebugShotSearch)
+        /// et imprime ce qu'elle trouve. Aucun input du bot n'en dépend : le plan retenu est loggé,
+        /// jamais appliqué.
+        ///
+        /// <para><b>Pourquoi cette étape.</b> Une recherche partant d'un état de départ faux produit
+        /// des plans confiants et absurdes, sans rien signaler (AUDIT §7.2). La laisser d'abord
+        /// tourner à vide est la seule façon de voir si ce qu'elle propose ressemble à ce qu'un bot
+        /// ferait, et si elle rend son verdict avant le contact.</para>
+        ///
+        /// <para><b>Les trois lignes possibles.</b> <c>REQ</c> = recherche lancée. <c>RES</c> = plan
+        /// retenu, avec sa note, la vitesse de balle qui en sortirait, le coût de la recherche et la
+        /// latence demande→lecture. <c>SKIP</c> = rien lancé, et pourquoi — sans cette ligne, une
+        /// recherche qui ne part jamais est indiscernable d'une recherche qui échoue.</para>
+        ///
+        /// <para><b>Ce qu'il faut regarder en premier</b> : <c>duree</c> et <c>latence</c>. La
+        /// recherche coûte ~10 ms, contre 8,33 ms pour un tick entier à 120 Hz. Si la latence
+        /// dépasse le <c>tRem</c> de la demande, le résultat arrive après le contact et la brique
+        /// est inutilisable telle quelle, quelle que soit la qualité des plans.</para>
+        /// </summary>
+        private void TraceShotSearch()
+        {
+            if (!Fixes.DebugShotSearch || Me.Name != "MyBot")
+                return;
+
+            if (!_shotSearchCreated)
+            {
+                // Création différée : tant que le flag est à false, aucune arène n'est allouée et la
+                // DLL n'est même pas sollicitée.
+                _shotSearchCreated = true;
+                _shotSearch = new ShotSearchRunner(Me.Team);
+                if (!_shotSearch.Available)
+                    Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}] [RSSEARCH] INDISPONIBLE — " +
+                        "RocketSimC.dll absente à côté de Bot.exe, ou arène non créée. " +
+                        "Voir native/RocketSimC/README.md.");
+            }
+
+            if (!_shotSearch.Available)
+                return;
+
+            // 1. Récolte du résultat d'une demande passée. Ne bloque jamais : s'il n'est pas prêt,
+            //    on repassera au tick suivant.
+            if (_pendingSearchId != null)
+            {
+                float latencyMs = (Game.Time - _pendingSearchTime) * 1000f;
+
+                if (_shotSearch.TryGetResult(out StrikeOutcome outcome))
+                {
+                    _lastSearchLatencyMs = latencyMs;
+
+                    // Search renvoie le meilleur plan qui touche, ou à défaut celui qui rate de le
+                    // moins possible. Trois informations décident de la suite : est-ce qu'on touche,
+                    // est-ce que la RÉFÉRENCE touchait, et est-ce que le plan la bat. Une note seule
+                    // ne veut rien dire sans son étalon.
+                    string refNote = outcome.ReferenceMissed
+                        ? "ref=RATE"
+                        : $"ref={outcome.ReferenceValue:F0}";
+
+                    string verdict = outcome.Touched
+                        ? $"plan={outcome.Plan} note={outcome.Value:F0} {refNote} " +
+                          $"gain={(outcome.BeatsReference ? "OUI" : "non")} " +
+                          $"|ballV|={outcome.BallVelocity.Length():F0}"
+                        : $"AUCUN CONTACT meilleur={outcome.Plan} rate={outcome.MinCarBallDist:F0}uu {refNote}";
+
+                    // Répartition du coût : c'est elle qui dit quoi optimiser. « natif » = RocketSim
+                    // (pas de physique + P/Invoke), « c# » = la loi de commande, déduite du total et
+                    // majorée du coût de l'instrumentation.
+                    SearchStats st = _shotSearch.LastStats;
+                    double nativeMs = st.NativeMs;
+                    double csMs = System.Math.Max(_shotSearch.LastDurationMs - nativeMs, 0);
+
+                    Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}] [RSSEARCH] RES tir={_pendingSearchId} " +
+                        $"{verdict} duree={_shotSearch.LastDurationMs:F1}ms latence={latencyMs:F0}ms " +
+                        $"| natif={nativeMs:F1}ms c#={csMs:F1}ms " +
+                        $"cand={st.Candidates} ticks={st.SimulatedTicks}");
+
+                    // Le plan n'est retenu que s'il fait MIEUX que ce que le bot allait faire. Un
+                    // plan qui touche mais ne bat pas la référence n'a aucune raison d'être appliqué.
+                    if (Fixes.ShotSearch && outcome.BeatsReference
+                        && _inFlight && _pendingSearchId == _flightShotId)
+                    {
+                        _activePlan = outcome.Plan;
+                    }
+
+                    _pendingSearchId = null;
+                }
+                else if (_shotSearch.LastSearchFoundNothing && !_shotSearch.Busy)
+                {
+                    // Plus aucun candidat du tout : la recherche a échoué (exception) ou l'horizon
+                    // était nul. À distinguer de « aucun contact », qui a bien exploré.
+                    Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}] [RSSEARCH] RES tir={_pendingSearchId} " +
+                        $"AUCUN CANDIDAT duree={_shotSearch.LastDurationMs:F1}ms latence={latencyMs:F0}ms");
+                    _pendingSearchId = null;
+                }
+            }
+
+            // 2. Nouvelle demande. Le front « au sol → en l'air » se lit sur CE tick : il faut le
+            //    détecter avant toute sortie anticipée, sinon on le perd.
+            bool justTookOff = _wasGrounded && !Me.IsGrounded;
+            _wasGrounded = Me.IsGrounded;
+
+            if (Action is not Shot shot)
+                return;
+
+            string id = $"{_intent}@{shot.Slice.Time:F2}";
+            float tRem = shot.Slice.Time - Game.Time;
+
+            // Un seul instant d'amorçage exact : LE DÉCOLLAGE. C'est le seul moment où les compteurs
+            // de saut d'une voiture en l'air sont connus (ils valent leur vraie valeur, pas zéro par
+            // défaut), et c'est aussi le seul moment à partir duquel Shot cesse d'appeler sa
+            // sous-action Arrive — donc le seul où sa loi de commande est rejouable.
+            if (!justTookOff || !RocketSimArena.CanSeedAtTakeoff(Me))
+                return;
+
+            // Le front est vu un tick APRÈS le décollage réel : les compteurs valent donc un tick,
+            // pas zéro. Les poser à zéro décrirait un saut qui n'a pas encore commencé.
+            RocketSimNative.RSCarState seed = RocketSimArena.FromCarAtTakeoff(Me, DeltaTime);
+
+            ShotReference reference = ShotReference.FromShot(shot, Field.NearestSurface(Me.Location).Normal);
+            if (!reference.Valid)
+            {
+                // AerialShot notamment : sa loi de commande recalcule un écart à une position
+                // prédite et ne se réduit pas aux constantes du tir. Refuser vaut mieux que
+                // perturber une référence inventée.
+                Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}] [RSSEARCH] SKIP tir={id} tRem={tRem:F2} " +
+                    $"raison=pas-de-reference-pour-{shot.GetType().Name}");
+                return;
+            }
+
+            // L'horizon va jusqu'au contact prévu. ShotSearch le plafonne à MaxTicks.
+            int ticks = (int)MathF.Round(MathF.Max(tRem, 0f) * 120f);
+
+            // Premier tick encore applicable quand la réponse arrivera. Sans cette borne, la
+            // recherche propose des blocs déjà écoulés — mesuré : bloc@0+8 retenu alors que la
+            // réponse tombait au tick 6.
+            int minBlockStart = (int)MathF.Ceiling(_lastSearchLatencyMs * SearchLatencyMargin / 1000f * 120f);
+
+            // Ticks de simulation par frame de jeu : 2 si RLBot nous appelle à 60 Hz, 1 à 120 Hz.
+            // Mesuré plutôt que supposé — la cadence dépend de la configuration du framework.
+            int controlPeriod = Utils.Cap((int)MathF.Round(DeltaTime * 120f), 1, 4);
+
+            if (!_shotSearch.Request(reference, seed, TheirGoal.Location, TheirGoal.Location.y,
+                    ticks, minBlockStart, controlPeriod))
+            {
+                Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}] [RSSEARCH] SKIP tir={id} tRem={tRem:F2} " +
+                    $"raison=recherche-deja-en-cours");
+                return;
+            }
+
+            // Le vol commence ici : c'est le tick 0 auquel les blocs des plans se réfèrent.
+            _inFlight = true;
+            _flightStartTime = Game.Time;
+            _flightShotId = id;
+            _activePlan = null;
+            _planLogged = false;
+            _planAppliedFrames = 0;
+
+            _pendingSearchId = id;
+            _pendingSearchTime = Game.Time;
+            Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}] [RSSEARCH] REQ tir={id} ref={reference.Kind} " +
+                $"tRem={tRem:F2} ticks={ticks} minBloc={minBlockStart} dt={DeltaTime * 1000f:F1}ms " +
+                $"v={Me.Velocity.Length():F0} boost={Me.Boost:F0} " +
+                $"ball=({Ball.Location.x:F0},{Ball.Location.y:F0},{Ball.Location.z:F0})");
+        }
+
+        /// <summary>
+        /// Applique le plan retenu par la recherche RocketSim, par-dessus les inputs de l'action
+        /// (<see cref="Fixes.ShotSearch"/>).
+        ///
+        /// <para>C'est le seul endroit où la simulation atteint réellement le jeu : <c>Run()</c>
+        /// s'exécute AVANT <c>Action.Run</c>, donc tout ce qu'on y écrirait serait écrasé.</para>
+        ///
+        /// <para><b>Ce qui est écrasé, et ce qui ne l'est pas.</b> Uniquement l'assiette et le boost,
+        /// pendant les <see cref="ShotSearch.BlockTicks"/> ticks du bloc. Le <b>saut reste à
+        /// l'action</b> : c'est lui qui porte la mécanique du double saut et du dodge, et la
+        /// contrarier ne produirait pas une variante de frappe mais une frappe annulée — c'est déjà
+        /// la règle appliquée dans la simulation, elle doit l'être ici aussi.</para>
+        /// </summary>
+        protected override void AfterAction()
+        {
+            if (!_inFlight)
+                return;
+
+            // Où en est-on du vol, en ticks de simulation — indépendant de la cadence du jeu.
+            int simTick = (int)MathF.Round((Game.Time - _flightStartTime) * 120f);
+
+            // Le vol se termine dès qu'on retouche le sol ou que le tir n'est plus d'actualité.
+            bool shotStillRunning = Action is Shot s && $"{_intent}@{s.Slice.Time:F2}" == _flightShotId;
+            if (Me.IsGrounded || !shotStillRunning)
+            {
+                EndFlight(simTick);
+                return;
+            }
+
+            if (!Fixes.ShotSearch || _activePlan == null)
+                return;
+
+            StrikePlan plan = _activePlan.Value;
+            if (simTick < plan.BlockStart || simTick >= plan.BlockStart + ShotSearch.BlockTicks)
+                return;
+
+            Controller.Steer = plan.Steer;
+            Controller.Yaw = plan.Steer;
+            Controller.Roll = plan.Roll;
+            Controller.Boost = plan.Boost;
+            _planAppliedFrames++;
+
+            if (Fixes.DebugShotSearch && !_planLogged && Me.Name == "MyBot")
+            {
+                _planLogged = true;
+                Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}] [RSSEARCH] APPLIQUE {plan} " +
+                    $"simTick={simTick} tir={_flightShotId}");
+            }
+        }
+
+        /// <summary>
+        /// Clôt le vol en cours et dit, en une ligne, si le plan a été appliqué — et sinon pourquoi.
+        ///
+        /// <para>Sans ce verdict, l'absence de ligne <c>APPLIQUE</c> est ambiguë : plan jamais
+        /// trouvé, plan trouvé trop tard, ou vol terminé avant le bloc ? Trois causes qui appellent
+        /// trois corrections différentes, et qui produisaient toutes le même silence.</para>
+        /// </summary>
+        private void EndFlight(int simTick)
+        {
+            if (Fixes.DebugShotSearch && Me.Name == "MyBot")
+            {
+                string verdict;
+                if (_planAppliedFrames > 0)
+                    verdict = $"APPLIQUE {_planAppliedFrames} frames";
+                else if (_activePlan == null)
+                    verdict = "AUCUN PLAN (rien ne battait la reference, ou reponse trop tardive)";
+                else
+                    verdict = $"NON APPLIQUE — vol fini au simTick {simTick}, " +
+                              $"le bloc commencait a {_activePlan.Value.BlockStart}";
+
+                Console.WriteLine($"[{Game.Time:F2}s][{Me.Name}] [RSSEARCH] FIN VOL {verdict} " +
+                    $"duree={(Game.Time - _flightStartTime):F2}s tir={_flightShotId}");
+            }
+
+            _inFlight = false;
+            _activePlan = null;
         }
 
         private static string Fmt(float eta) => eta == float.MaxValue ? "∞" : eta.ToString("F2");

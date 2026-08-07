@@ -79,7 +79,7 @@ namespace RedUtils
 		{
 			if (_startTime < 0f)
 				_startTime = Game.Time;
-			Console.WriteLine("Lancement du fastdrifting");
+			
 			// AimAt règle Steer/Yaw vers un point dans la direction visée et renvoie l'écart de cap
 			// SIGNÉ [1] (Atan2), comme dans Cover.Hold. On se sert du signe pour latcher le braquage.
 			float yaw = bot.AimAt(bot.Me.Location + TargetDirection * 1000f)[1];
@@ -92,7 +92,7 @@ namespace RedUtils
 
 			if (aligned || tooSlow || airborne || timedOut)
 			{
-				Console.WriteLine("Fin du fastdrifting");
+				
 				// Fin : on relâche tout (surtout le frein à main) et on redevient interruptible.
 				bot.Controller.Handbrake = false;
 				bot.Controller.Throttle = 0f;

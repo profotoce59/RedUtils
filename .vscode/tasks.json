@@ -22,6 +22,28 @@
                 "-c", "Release"
             ],
             "problemMatcher": "$msCompile"
-        }
+        },
+        {
+            "label": "rocketsim: configure",
+            "type": "shell",
+            "options": { "cwd": "${workspaceFolder}/native/RocketSimC" },
+            "windows": { "command": "cmake -B build -S . -A x64" },
+            "problemMatcher": []
+        },
+        {
+            "label": "rocketsim: build",
+            "type": "shell",
+            "options": { "cwd": "${workspaceFolder}/native/RocketSimC" },
+            "command": "cmake --build build --config Release",
+            "dependsOn": "rocketsim: configure",
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "build (avec RocketSim)",
+            "dependsOrder": "sequence",
+            "dependsOn": ["rocketsim: build", "build"],
+            "problemMatcher": [],
+            "detail": "Natif puis C#. Bot.csproj recopie la bibliothèque dans le dossier de sortie."
+        },
     ]
 }

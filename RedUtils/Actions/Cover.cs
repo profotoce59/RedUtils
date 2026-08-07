@@ -170,9 +170,9 @@ namespace RedUtils
 			bool drifting = _drive != null && _drive.Action is FastDrift;
 			string state = drifting ? "DRIFT" : !bot.Me.IsGrounded ? "AIR" : _holding ? "HOLD" : _staged ? "APPROCHE" : "STAGING";
 			float capErr = bot.Me.Forward.FlatAngle(toFace) * 180f / MathF.PI;
-			Console.WriteLine($"[{Game.Time:F1}s][Cover] {state} distPoste={distance:F0} capErr={capErr:F0}° " +
+			/*Console.WriteLine($"[{Game.Time:F1}s][Cover] {state} distPoste={distance:F0} capErr={capErr:F0}° " +
 				$"turnSign={_turnSign} v={bot.Me.Velocity.FlatLen():F0} " +
-				$"thr={bot.Controller.Throttle:F1} steer={bot.Controller.Steer:F1} hb={bot.Controller.Handbrake}");
+				$"thr={bot.Controller.Throttle:F1} steer={bot.Controller.Steer:F1} hb={bot.Controller.Handbrake}");*/
 		}
 
 		/// <summary>

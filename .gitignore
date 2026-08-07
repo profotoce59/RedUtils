@@ -372,3 +372,6 @@ paket-files/
 # Python Tools for Visual Studio (PTVS)
 __pycache__/
 *.pyc
+# Captures de poses d avant-tir (Bot/ShotWatcher.cs + shot_watcher.py) : donnees de
+# session, regenerees a chaque match.
+shot_captures.jsonl

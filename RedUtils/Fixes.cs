@@ -130,10 +130,18 @@ namespace RedUtils
 		/// construite (voir <c>native/RocketSimC/README.md</c>) et posée à côté de
 		/// <c>Bot.exe</c>. Sans elle, <c>ShotSearchRunner.Available</c> est faux et le bot garde
 		/// son comportement d'origine.</para>
-		/// <para><b>À laisser à false tant que <see cref="DebugShotSearch"/> n'a pas montré des
-		/// résultats sains.</b> Une recherche partant d'un état de départ faux produit des plans
-		/// confiants et absurdes, sans rien signaler.</para></summary>
-		public static bool ShotSearch = false;
+		/// <para><b>Ce que le flag change concrètement.</b> Quand la recherche rend un plan qui
+		/// <b>bat la référence</b> (<c>StrikeOutcome.BeatsReference</c>), <c>MyBot.AfterAction</c>
+		/// écrase l'assiette et le boost de l'action pendant les <c>ShotSearch.BlockTicks</c> ticks
+		/// du bloc retenu. Le <b>saut reste à l'action</b> : il porte la mécanique du double saut et
+		/// du dodge, et la contrarier annulerait la frappe au lieu de la varier.</para>
+		/// <para>Un plan qui touche la balle mais ne fait pas mieux que la référence n'est jamais
+		/// appliqué : il n'y a aucune raison de préférer une simulation à ce que le bot allait faire
+		/// quand elle ne promet rien de plus.</para>
+		/// <para><b>Mettre à false pour revenir à l'observation seule</b> : la recherche continue de
+		/// tourner et de logguer sous <see cref="DebugShotSearch"/>, sans toucher aux inputs. C'est
+		/// la position de repli si le bot se met à frapper moins bien.</para></summary>
+		public static bool ShotSearch = true;
 
 		/// <summary>DEBUG — Trace la recherche de frappe : plan retenu, note, vitesse de balle
 		/// prédite, et durée réelle de la recherche.
@@ -141,8 +149,35 @@ namespace RedUtils
 		/// du temps disponible avant le contact. Le budget d'un tick est de 8,33 ms à 120 Hz, et
 		/// la recherche est justement déportée pour pouvoir le dépasser — mais pas de beaucoup.</para>
 		/// <para>Sert aussi à comparer, sans rien changer au comportement, ce que la recherche
-		/// aurait choisi contre ce que le bot fait réellement (<c>ShotSearch</c> à false).</para></summary>
-		public static bool DebugShotSearch = false;
+		/// aurait choisi contre ce que le bot fait réellement.</para>
+		/// <para><b>C'est aujourd'hui le SEUL point d'entrée de la recherche</b> (voir
+		/// <c>MyBot.TraceShotSearch</c>) : elle tourne sur son thread de fond, elle est loggée, et
+		/// aucun input du bot ne la lit. Elle part <b>au décollage</b> — seul instant où l'état
+		/// d'une voiture en l'air est exactement connu — et uniquement pour MyBot.</para>
+		/// <para><b>Prérequis</b> : <c>RocketSimC.dll</c> construite et posée à côté de
+		/// <c>Bot.exe</c>. Sans elle, une ligne <c>[RSSEARCH] INDISPONIBLE</c> est imprimée une fois
+		/// et le bot continue normalement.</para>
+		/// <para>Trois lignes possibles : <c>REQ</c> (recherche lancée), <c>RES</c> (plan retenu,
+		/// note, note de la <b>référence</b>, gain, durée, latence) et <c>SKIP</c> (rien lancé, avec
+		/// la raison — typiquement un <c>AerialShot</c>, dont la loi de commande n'est pas
+		/// rejouable).</para>
+		/// <para><b>Ce qu'il faut lire en premier</b> : <c>ref=</c> et <c>gain=</c>. Une note de plan
+		/// sans son étalon ne veut rien dire, et <c>ref=RATE</c> signale que la référence elle-même
+		/// n'atteint pas la balle — donc que la simulation ne décrit pas ce que le bot fait, et que
+		/// tout le reste de la ligne est sans valeur.</para></summary>
+		public static bool DebugShotSearch = true;
+
+		/// <summary>DEBUG — Auto-vérifie le partage de préfixe de la recherche de frappe.
+		/// <para>La recherche ne simule le préfixe commun (tout ce qui précède la fenêtre de
+		/// perturbation finale) qu'une seule fois, puis fait repartir chaque candidat d'un snapshot
+		/// d'arène (voir <c>ShotSearch.SweepWindowTicks</c>). Ça ne vaut que si restaurer l'arène
+		/// reproduit EXACTEMENT le run direct.</para>
+		/// <para>À true, chaque recherche rejoue la référence depuis le snapshot et la compare au run
+		/// direct : si la balle finale dévie (position &gt; 5 uu ou vitesse &gt; 20 uu/s), une ligne
+		/// <c>[ShotSearch] DERIVE BRANCHE</c> est imprimée. Tant qu'aucune ligne n'apparaît, le
+		/// partage est fidèle. Coûte une simulation de suffixe par recherche — à repasser à false une
+		/// fois la fidélité confirmée en match.</para></summary>
+		public static bool ShotSearchValidateBranch = false;
 
 		/// <summary>DEBUG — Trace l'action <see cref="Cover"/> (10x/s + rendu 3D), pour MyBot.
 		/// <para>Console : état APPROCHE / HOLD / AIR, distance au POSTE (pas à la balle), écart de cap
@@ -278,6 +313,27 @@ namespace RedUtils
 		/// restante, pad visé. Rendu : ligne orange = destination, jaune = pad. Sert à régler
 		/// <c>ArcMaxAngle</c> : si la vitesse chute dans la phase ARC, l'arc est trop serré.</para></summary>
 		public static bool DebugRotation = true;
+
+		/// <summary>DEBUG — Mémoire des poses qui PRÉCÈDENT un tir (<c>Bot/ShotWatcher.cs</c>).
+		/// <para>Quand ce flag est vrai, la voiture observée (<c>MyBot.ShotWatcherCarName</c>, MyBot
+		/// par défaut — les 3 autres ne paient rien) garde en tampon circulaire la pose complète du
+		/// match, et n'en RETIENT que celles qui précèdent de 0,5 s le départ d'un tir. Chacune est
+		/// écrite sur une ligne de <c>shot_captures.jsonl</c>, à la racine du dépôt.</para>
+		/// <para>Sert à rejouer un tir raté À L'IDENTIQUE : <c>python shot_watcher.py</c> liste les
+		/// captures, en rejoue une dans le jeu (state setting), ou en recrache le scénario Python
+		/// prêt à coller dans un <c>state_setting_tests_*.py</c>. Sans ça, un tir raté se
+		/// reconstruit de mémoire — donc on corrige contre une situation qui n'est pas celle qui a
+		/// échoué.</para>
+		/// <para>Coût : une copie de structs par tick, aucune allocation, et une écriture disque
+		/// seulement au départ d'un tir. Peut rester à true en session de debug.</para></summary>
+		public static bool ShotWatcher = true;
+
+		/// <summary>DEBUG — Étend <see cref="ShotWatcher"/> aux frappes sans visée (<c>Save</c>,
+		/// <c>Fifty</c>) en plus des vrais tirs (les quatre <c>Shot</c> + <c>QuickShot</c>).
+		/// <para>false par défaut : ces deux actions se déclenchent bien plus souvent qu'un tir, et
+		/// noieraient les captures qu'on cherche. À passer à true pour diagnostiquer une save ou un
+		/// 50/50 raté.</para></summary>
+		public static bool ShotWatcherIncludeStrikes = false;
 
 		/// <summary>Feature — Pressing offensif.
 		/// <para>Sans ce flag, comportement d'origine : en état NotPossessed les deux bots se replient

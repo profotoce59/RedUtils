@@ -284,6 +284,63 @@ TEST_STATES = [
             },
         ),
     ),
+        # Capture automatique (shot_watcher.py) : pose du match 0.52 s AVANT le depart
+    # d'un GroundShot. Rejouee telle quelle, elle remet le bot devant le meme choix.
+    # Le tir visait (-790,-5213,93), contact prevu 5.67 s apres son depart.
+        # Capture automatique (shot_watcher.py) : pose du match 0.50 s AVANT le depart
+    # d'un GroundShot. Rejouee telle quelle, elle remet le bot devant le meme choix.
+    # Le tir visait (716,-5213,93), contact prevu 3.78 s apres son depart.
+        # Capture automatique (shot_watcher.py) : pose du match 0.50 s AVANT le depart
+    # d'un AerialShot. Rejouee telle quelle, elle remet le bot devant le meme choix.
+    # Le tir visait (507,-5213,379), contact prevu 1.63 s apres son depart.
+    (
+        "SHOT72 AerialShot Shot->LeurBut - t=254.4s (pose a T-0.50s)",
+        GameState(
+            ball=BallState(physics=Physics(
+                location=Vector3(-2779, -4737, 998),
+                velocity=Vector3(1720, -554, -298),
+                angular_velocity=Vector3(-0.239, -0.296, -0.783),
+            )),
+            cars={
+                0: CarState(  # MyBot-protosv1.2.2, equipe bleue
+                    physics=Physics(
+                        location=Vector3(-3019, -4983, 679),
+                        rotation=Rotator(pitch=0.7342, yaw=-0.5398, roll=1.5777),
+                        velocity=Vector3(634, -384, 704),
+                        angular_velocity=Vector3(1.496, 1.810, 1.307),
+                    ),
+                    boost_amount=12,
+                ),
+                1: CarState(  # MyBot-protosv1.2.2 (2), equipe bleue
+                    physics=Physics(
+                        location=Vector3(692, -4714, 17),
+                        rotation=Rotator(pitch=-0.0096, yaw=2.9945, roll=0.0000),
+                        velocity=Vector3(-20, -2, 0),
+                        angular_velocity=Vector3(-0.001, 0.001, 0.147),
+                    ),
+                    boost_amount=81,
+                ),
+                2: CarState(  # MyBot, equipe orange -- LE TIREUR
+                    physics=Physics(
+                        location=Vector3(-1550, -1858, 17),
+                        rotation=Rotator(pitch=-0.0099, yaw=-1.6510, roll=0.0002),
+                        velocity=Vector3(-70, -1832, 0),
+                        angular_velocity=Vector3(0.001, -0.001, -1.561),
+                    ),
+                    boost_amount=62,
+                ),
+                3: CarState(  # MyBot (2), equipe orange
+                    physics=Physics(
+                        location=Vector3(-3036, -4838, 992),
+                        rotation=Rotator(pitch=-0.1120, yaw=0.5178, roll=-2.6785),
+                        velocity=Vector3(1030, -957, 13),
+                        angular_velocity=Vector3(-4.170, 0.290, 2.122),
+                    ),
+                    boost_amount=2,
+                ),
+            },
+        ),
+    ),
 ]
 
 

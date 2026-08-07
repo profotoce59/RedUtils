@@ -216,7 +216,7 @@ namespace RedUtils
 
 			_drive.Run(bot);
 			Interruptible = _drive.Interruptible;
-			Debug(bot, phase);
+			//Debug(bot, phase);
 
 			if (bot.Me.Location.FlatDist(FinalTarget) < ArrivedDistance)
 				Finished = true;

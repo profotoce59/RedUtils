@@ -32,14 +32,28 @@ namespace RedUtils.Interop
 		/// garde les repères cohérents avec le jeu.</param>
 		public RocketSimArena(int team)
 		{
-			if (RocketSimNative.IsInitialized() == 0 && RocketSimNative.InitPlanesOnly() != 0)
-				return;
+			// La bibliothèque native est OPTIONNELLE : sans elle, le premier P/Invoke lève une
+			// DllNotFoundException. Non rattrapée, elle remonterait jusqu'au tick du bot et le
+			// tuerait — alors que l'absence de RocketSimC doit seulement rendre Valid faux.
+			try
+			{
+				if (RocketSimNative.IsInitialized() == 0 && RocketSimNative.InitPlanesOnly() != 0)
+					return;
 
-			_arena = RocketSimNative.ArenaCreate(120f);
-			if (_arena == IntPtr.Zero)
-				return;
+				_arena = RocketSimNative.ArenaCreate(120f);
+				if (_arena == IntPtr.Zero)
+					return;
 
-			_carId = RocketSimNative.ArenaAddCar(_arena, team);
+				_carId = RocketSimNative.ArenaAddCar(_arena, team);
+			}
+			catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+			{
+				// DLL absente, périmée (point d'entrée manquant) ou compilée pour la mauvaise
+				// architecture. Dans les trois cas : pas de simulation, et le bot continue.
+				Console.WriteLine($"[RocketSim] bibliothèque native indisponible : {e.Message}");
+				_arena = IntPtr.Zero;
+				_carId = 0;
+			}
 		}
 
 		/// <summary>Pose l'état de la voiture et de la balle : le point de départ d'un candidat.</summary>
@@ -139,6 +153,48 @@ namespace RedUtils.Interop
 		/// </summary>
 		public static bool CanSeedExactly(Car car)
 			=> car.IsGrounded && !car.HasJumped && !car.HasDoubleJumped && !car.IsDemolished;
+
+		/// <summary>
+		/// Vrai si la voiture <b>vient de décoller</b> sur son premier saut : en l'air, saut simple
+		/// consommé, second saut et flip encore disponibles.
+		///
+		/// <para>C'est la seule autre situation où l'état de départ est intégralement connu sans
+		/// suivi tick par tick, et elle ne l'est qu'à <b>l'instant précis du décollage</b>. Les
+		/// compteurs manquants du paquet RLBot (<c>jumpTime</c>, <c>airTimeSinceJump</c>) valent
+		/// alors zéro parce que le saut vient de commencer — pas parce qu'on les ignore. Un tick
+		/// plus tard ils ont dérivé et l'amorçage redevient faux.</para>
+		///
+		/// <para>À utiliser avec <see cref="FromCarAtTakeoff"/>, et uniquement sur le front
+		/// « au sol → en l'air ». Voir AUDIT §7.2.</para>
+		/// </summary>
+		public static bool CanSeedAtTakeoff(Car car)
+			=> !car.IsGrounded && car.HasJumped && !car.HasDoubleJumped && !car.IsDemolished;
+
+		/// <summary>
+		/// État de simulation d'une voiture qui vient de quitter le sol sur son premier saut.
+		///
+		/// <para><paramref name="airTime"/> est le temps écoulé depuis le décollage. Il doit rester
+		/// de l'ordre du tick : c'est ce qui rend l'amorçage exact. Au-delà de la durée maximale de
+		/// saut, la poussée est terminée et <c>IsJumping</c> retombe à zéro — le maintenir vrai
+		/// ferait décoller une voiture plus haut que la vraie.</para>
+		/// </summary>
+		public static RocketSimNative.RSCarState FromCarAtTakeoff(Car car, float airTime)
+		{
+			RocketSimNative.RSCarState state = FromCar(car);
+
+			state.IsOnGround = 0;
+			state.HasJumped = 1;
+			state.HasDoubleJumped = 0;
+			state.HasFlipped = 0;
+
+			// Le saut est encore « en cours » tant que le bouton peut prolonger la poussée : c'est
+			// cette fenêtre que les candidats exploitent en maintenant Jump plus ou moins longtemps.
+			state.IsJumping = airTime < Car.JumpMaxDuration ? 1 : 0;
+			state.JumpTime = airTime;
+			state.AirTimeSinceJump = airTime;
+
+			return state;
+		}
 
 		public static RocketSimNative.RSBallState BallNow()
 		{

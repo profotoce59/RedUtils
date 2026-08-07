@@ -164,6 +164,17 @@ namespace RedUtils
 		/// </summary>
 		protected virtual void OnStateSet() { }
 
+		/// <summary>
+		/// Runs after the current action has written its inputs, just before they're returned to
+		/// RLBot. Override to correct or override those inputs.
+		///
+		/// <para>Strategy code in <see cref="Run"/> runs BEFORE the action, so anything it writes to
+		/// <c>Controller</c> is overwritten by <c>Action.Run</c>. This hook is the only place where a
+		/// correction computed outside the action — a simulated strike plan, a safety clamp — can
+		/// actually reach the game.</para>
+		/// </summary>
+		protected virtual void AfterAction() { }
+
 		/// <summary>Updates DeltaTime... pretty self explanitory</summary>
 		private void UpdateDeltaTime()
 		{
@@ -206,10 +217,13 @@ namespace RedUtils
 				}
 			}
 
+			// Last word on the inputs, after the action has had its say.
+			AfterAction();
+
 			UpdateDeltaTime();
 
 			// returns our inputs to RLBot
-			return Controller; 
+			return Controller;
 		}
 
 		/// <summary>Runs every tick. Overwrite with your own strategy code!</summary>

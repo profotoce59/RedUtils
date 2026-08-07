@@ -28,6 +28,22 @@
 
 ---
 
+## Correction de frappe par simulation (`Fixes.ShotSearch`)
+
+Se greffe **par-dessus** l'arbre de décision : ne choisit jamais l'action, corrige seulement les inputs d'un tir déjà engagé.
+
+**Quand.** Au tick où la voiture quitte le sol pendant un `JumpShot`, un `DoubleJumpShot` ou un `AerialShot`. C'est le seul instant où l'état d'une voiture en l'air est exactement connu — les compteurs de saut absents du paquet RLBot y valent leur vraie valeur — et c'est aussi le moment où `Shot` cesse d'appeler sa sous-action `Arrive` ou `Drive`, donc où sa loi de commande devient rejouable. Les tirs qui ne décollent jamais (`GroundShot`, `QuickShot`) ne sont pas concernés.
+
+**Quoi.** Une recherche part sur un thread de fond. Elle simule d'abord dans RocketSim **ce que le tir va faire** (`ShotReference` rejoue la branche aérienne de `Shot.Run`), puis rejoue la même trajectoire en imposant une autre assiette — braquage/lacet, tonneau, boost — sur un bloc de 8 ticks consécutifs. Chaque candidat est noté sur la vitesse de balle après contact et le franchissement du plan de but.
+
+**Partage de préfixe (perturbation en fin de vol seulement).** On ne balaye les blocs que dans la **fenêtre finale** avant le contact (`ShotSearch.SweepWindowTicks`, ~0,5 s), pas sur tout le vol. Tout ce qui précède cette fenêtre est identique pour tous les candidats : la référence le simule **une seule fois**, l'arène est snapshotée à l'entrée de la fenêtre (RocketSim repose l'état physique complet, compteurs de saut/flip compris), et chaque candidat repart de ce snapshot. Le coût passe de `N × horizon` à `horizon + N × fenêtre`. Effet de bord voulu : un bloc tardif est loin dans le futur quand la réponse asynchrone revient, donc encore entièrement applicable — contrairement aux blocs précoces, souvent déjà écoulés à la lecture. `Fixes.ShotSearchValidateBranch` rejoue la référence depuis le snapshot et la compare au run direct : une ligne `[ShotSearch] DERIVE BRANCHE` signale une restauration d'arène infidèle (sinon le partage est bon).
+
+**Application.** `MyBot.AfterAction` écrase assiette et boost pendant les 8 ticks du bloc retenu, et **seulement si le plan bat la référence**. Le saut reste à l'action : il porte la mécanique du double saut et du dodge, la contrarier annulerait la frappe. Aucun bloc ne peut commencer avant le tick où la réponse sera lue (latence mesurée × 1,5) — un plan qui agit avant qu'on le connaisse est inapplicable.
+
+**Repli.** `Fixes.ShotSearch` à false : la recherche tourne et loggue toujours sous `Fixes.DebugShotSearch`, sans toucher aux inputs. Sans `RocketSimC.dll` à côté de `Bot.exe`, tout est inerte et le bot joue comme avant.
+
+---
+
 ## Calcul de l'état de possession
 
 ETA = temps avant que le joueur puisse intercepter un slice de `Ball.Prediction`, via `Drive.GetEta`.

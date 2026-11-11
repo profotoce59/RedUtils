@@ -1,0 +1,84 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Build & Launch (Debug)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/Bot/bin/Debug/net10.0/Bot.exe",
+            "args": ["36969"],
+            "cwd": "${workspaceFolder}/Bot",
+            "stopAtEntry": false,
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Attach to Bot (RLBot lancé)",
+            "type": "coreclr",
+            "request": "attach",
+            "processName": "Bot"
+        },
+        {
+            "name": "Run state_setting_tests.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/state_setting_tests.py",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run state_setting_fixes.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/state_setting_tests_fixes.py",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run state_setting_tests_attack.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/state_setting_tests_attack.py",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Run state_setting_tests_wavedash.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/state_setting_tests_wavedash.py",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        
+        {
+            "name": "Build & Launch (Debug, avec RocketSim)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build (avec RocketSim)",
+            "program": "${workspaceFolder}/Bot/bin/Debug/net10.0/Bot.exe",
+            "args": ["36969"],
+            "cwd": "${workspaceFolder}/Bot",
+            "stopAtEntry": false,
+            "console": "integratedTerminal"
+        }
+
+// --- Et dans .vscode/launch.json, une configuration qui construit les deux avant de lancer ---
+//
+//        {
+//            "name": "Build & Launch (Debug, avec RocketSim)",
+//            "type": "coreclr",
+//            "request": "launch",
+//            "preLaunchTask": "build (avec RocketSim)",
+//            "program": "${workspaceFolder}/Bot/bin/Debug/net10.0/Bot.exe",
+//            "args": ["36969"],
+//            "cwd": "${workspaceFolder}/Bot",
+//            "stopAtEntry": false,
+//            "console": "integratedTerminal"
+//        }
+    ]
+}

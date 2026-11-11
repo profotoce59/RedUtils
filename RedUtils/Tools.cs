@@ -24,6 +24,11 @@ namespace RedUtils
 		public float Throttle(float targetSpeed, bool backwards = false)
 		{
 			float carSpeed = Me.Local(Me.Velocity).x; // The car's speed in the forward direction
+			// Garde-fou : un targetSpeed NaN/Infini (ex. division 0/0 dans PredictLandingTime quand on
+			// saute perpendiculairement d'un mur) ferait crasher MathF.Sign plus bas. On retombe alors
+			// sur la vitesse actuelle (throttle neutre) plutôt que de lever une ArithmeticException.
+			if (float.IsNaN(targetSpeed) || float.IsInfinity(targetSpeed))
+				targetSpeed = carSpeed * (backwards ? -1 : 1);
 			float speedDiff = (targetSpeed * (backwards ? -1 : 1)) - carSpeed;
 			Controller.Throttle = Utils.Cap(MathF.Pow(speedDiff, 2) * MathF.Sign(speedDiff) / 1000, -1, 1);
 			Controller.Boost = targetSpeed > 1400 && speedDiff > 50 && carSpeed < 2250 && Controller.Throttle == 1 && !backwards;
@@ -63,7 +68,13 @@ namespace RedUtils
 		/// <param name="target">The final resting place of the ball after we hit it (hopefully)</param>
 		public static Shot FindShot(ShotCheck shotCheck, Target target)
 		{
-			return shotCheck(Ball.Prediction.Find(slice => shotCheck(slice, target) != null), target);
+			Shot result = null;
+			Ball.Prediction.Find(slice =>
+			{
+				result = shotCheck(slice, target);
+				return result != null;
+			});
+			return result;
 		}
 
 		/// <summary>The default shot check. Will go for pretty much anything it can</summary>
@@ -80,7 +91,7 @@ namespace RedUtils
 				{
 					Ball ballAfterHit = slice.ToBall();
 					Vec3 carFinVel = ((slice.Location - Me.Location) / timeRemaining).Cap(0, Car.MaxSpeed);
-					ballAfterHit.velocity = carFinVel + slice.Velocity.Flatten(carFinVel.Normalize()) * 0.8f;
+					ballAfterHit.velocity = (carFinVel * 6 + slice.Velocity) / 7;
 					Vec3 shotTarget = target.Clamp(ballAfterHit);
 
 					// First, check if we can aerial
@@ -114,6 +125,107 @@ namespace RedUtils
 			}
 
 			return null; // if none of those work, we'll just return null (meaning no shot was found)
+		}
+
+		/// <summary>
+		/// Same as DefaultShotCheck but uses the RocketSim collision formula to estimate ball velocity after hit.
+		/// More accurate shotTarget, especially for angled shots.
+		/// Switch with DefaultShotCheck in Bot.cs to compare precision.
+		/// </summary>
+		public Shot AccurateShotCheck(BallSlice slice, Target target)
+		{
+			if (slice == null)
+				return null;
+
+			float timeRemaining = slice.Time - Game.Time;
+			if (timeRemaining <= 0 || !target.Fits(slice.Location))
+				return null;
+
+			Ball ballAfterHit = slice.ToBall();
+			ballAfterHit.velocity = slice.Velocity + RocketSimAddedVelocity(Me, slice);
+			Vec3 shotTarget = target.Clamp(ballAfterHit);
+
+			AerialShot aerialShot = new AerialShot(Me, slice, shotTarget);
+			if (aerialShot.IsValid(Me)) return aerialShot;
+
+			GroundShot groundShot = new GroundShot(Me, slice, shotTarget);
+			if (groundShot.IsValid(Me)) return groundShot;
+
+			JumpShot jumpShot = new JumpShot(Me, slice, shotTarget);
+			if (jumpShot.IsValid(Me)) return jumpShot;
+
+			DoubleJumpShot doubleJumpShot = new DoubleJumpShot(Me, slice, shotTarget);
+			if (doubleJumpShot.IsValid(Me)) return doubleJumpShot;
+
+			return null;
+		}
+
+		/// <summary>
+		/// 50/50 au sol : uniquement GroundShot, vise le but adverse.
+		/// IsValid garantit que la balle est assez basse pour un tir au sol.
+		/// </summary>
+		public Shot Ground5050Check(BallSlice slice, Target target)
+		{
+			if (slice == null) return null;
+			float timeRemaining = slice.Time - Game.Time;
+			if (timeRemaining <= 0 || !target.Fits(slice.Location)) return null;
+
+			Ball ballAfterHit = slice.ToBall();
+			Vec3 carFinVel = ((slice.Location - Me.Location) / timeRemaining).Cap(0, Car.MaxSpeed);
+			ballAfterHit.velocity = (carFinVel * 6 + slice.Velocity) / 7;
+			Vec3 shotTarget = target.Clamp(ballAfterHit);
+
+			GroundShot groundShot = new GroundShot(Me, slice, shotTarget);
+			return groundShot.IsValid(Me) ? groundShot : null;
+		}
+
+		/// <summary>
+		/// 50/50 aérien : JumpShot ou DoubleJumpShot, vise le but adverse.
+		/// IsValid garantit que la hauteur correspond à un saut simple ou double.
+		/// </summary>
+		public Shot Air5050Check(BallSlice slice, Target target)
+		{
+			if (slice == null) return null;
+			float timeRemaining = slice.Time - Game.Time;
+			if (timeRemaining <= 0 || !target.Fits(slice.Location)) return null;
+
+			Ball ballAfterHit = slice.ToBall();
+			Vec3 carFinVel = ((slice.Location - Me.Location) / timeRemaining).Cap(0, Car.MaxSpeed);
+			ballAfterHit.velocity = (carFinVel * 6 + slice.Velocity) / 7;
+			Vec3 shotTarget = target.Clamp(ballAfterHit);
+
+			JumpShot jumpShot = new JumpShot(Me, slice, shotTarget);
+			if (jumpShot.IsValid(Me)) return jumpShot;
+
+			DoubleJumpShot doubleJumpShot = new DoubleJumpShot(Me, slice, shotTarget);
+			return doubleJumpShot.IsValid(Me) ? doubleJumpShot : null;
+		}
+
+		/// <summary>
+		/// Estimates the velocity added to the ball on hit, using RocketSim constants.
+		/// Source: github.com/ZealanL/RocketSim — Ball::_OnHit
+		/// </summary>
+		private static Vec3 RocketSimAddedVelocity(Car car, BallSlice slice)
+		{
+			// Contact normal: car → ball, Z flattened to 35% (BALL_CAR_EXTRA_IMPULSE_Z_SCALE)
+			Vec3 hitDir = ((slice.Location - car.Location) * new Vec3(1, 1, 0.35f)).Normalize();
+
+			// Reduce the forward component by 35% (BALL_CAR_EXTRA_IMPULSE_FORWARD_SCALE = 0.65)
+			hitDir = (hitDir - car.Forward * hitDir.Dot(car.Forward) * 0.35f).Normalize();
+
+			// Relative speed capped at 4600 uu/s (BALL_CAR_EXTRA_IMPULSE_MAXDELTAVEL_UU)
+			float relSpeed = MathF.Min((slice.Velocity - car.Velocity).Length(), 4600f);
+
+			return hitDir * relSpeed * RocketSimImpulseCurve(relSpeed);
+		}
+
+		/// <summary>BALL_CAR_EXTRA_IMPULSE_FACTOR_CURVE from RocketSim — piecewise linear</summary>
+		private static float RocketSimImpulseCurve(float relSpeed)
+		{
+			if (relSpeed <= 500f)  return 0.65f;
+			if (relSpeed <= 2300f) return 0.65f + (0.55f - 0.65f) * (relSpeed - 500f)  / (2300f - 500f);
+			if (relSpeed <= 4600f) return 0.55f + (0.30f - 0.55f) * (relSpeed - 2300f) / (4600f - 2300f);
+			return 0.30f;
 		}
 	}
 }
